@@ -164,13 +164,25 @@ CSRF_TRUSTED_ORIGINS = [
     if origin.strip()
 ]
 
-# CSRF and Session Cookie Settings for SPA
+# # CSRF and Session Cookie Settings for SPA
+# CSRF_COOKIE_HTTPONLY = False
+# CSRF_COOKIE_NAME = 'csrftoken'
+# CSRF_COOKIE_SAMESITE = 'Lax'
+# SESSION_COOKIE_SAMESITE = 'Lax'
+# CSRF_COOKIE_SECURE = False
+# SESSION_COOKIE_SECURE = False
+
+# CSRF and Session Cookie Settings for production
 CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_NAME = 'csrftoken'
-CSRF_COOKIE_SAMESITE = 'Lax'
-SESSION_COOKIE_SAMESITE = 'Lax'
-CSRF_COOKIE_SECURE = False
-SESSION_COOKIE_SECURE = False
+
+CSRF_COOKIE_SAMESITE = 'None'
+SESSION_COOKIE_SAMESITE = 'None'
+
+CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = True
+
+SESSION_COOKIE_HTTPONLY = True
 
 
 # Google OAuth Configuration

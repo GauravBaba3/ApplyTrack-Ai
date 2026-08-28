@@ -60,8 +60,8 @@ function App() {
             {/* Public routes */}
             <Route path="/" element={<AuthLayout><LandingPage /></AuthLayout>} />
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/privacy" element={<PrivacyPage />} />
-            <Route path="/terms" element={<TermsPage />} />
+            <Route path="/privacy" element={<AuthLayout><PrivacyPage /></AuthLayout>} />
+            <Route path="/terms" element={<AuthLayout><TermsPage /></AuthLayout>} />
             
             {/* Protected routes */}
             <Route

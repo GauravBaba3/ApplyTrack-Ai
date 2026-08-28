@@ -16,6 +16,8 @@ import ApplicationDetailPage from './pages/ApplicationDetailPage';
 import EmailActivityPage from './pages/EmailActivityPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import SettingsPage from './pages/SettingsPage';
+import PrivacyPage from './pages/PrivacyPage';
+import TermsPage from './pages/TermsPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 import { ThemeProvider } from './context/ThemeContext';
@@ -58,6 +60,8 @@ function App() {
             {/* Public routes */}
             <Route path="/" element={<AuthLayout><LandingPage /></AuthLayout>} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/privacy" element={<AuthLayout><PrivacyPage /></AuthLayout>} />
+            <Route path="/terms" element={<AuthLayout><TermsPage /></AuthLayout>} />
             
             {/* Protected routes */}
             <Route

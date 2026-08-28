@@ -225,9 +225,18 @@ export default function LoginPage() {
           </div>
 
           {/* Minimal Footer */}
-          <div className="w-full max-w-md mx-auto pt-6 border-t border-slate-100 dark:border-slate-800/80 text-center">
+          <div className="w-full max-w-md mx-auto pt-6 border-t border-slate-100 dark:border-slate-800/80 text-center space-y-2">
+            <div className="flex items-center justify-center gap-3 text-[11px] text-slate-500 dark:text-slate-400">
+              <Link to="/privacy" className="hover:text-slate-900 dark:hover:text-slate-200 transition-colors">
+                Privacy Policy
+              </Link>
+              <span>&bull;</span>
+              <Link to="/terms" className="hover:text-slate-900 dark:hover:text-slate-200 transition-colors">
+                Terms of Service
+              </Link>
+            </div>
             <p className="text-[11px] text-slate-400 dark:text-slate-500 font-medium">
-              Protected by Google OAuth 2.0 PKCE. Revocable anytime.
+              Protected by Google OAuth 2.0 PKCE. Read-only Gmail Scope.
             </p>
           </div>
         </div>

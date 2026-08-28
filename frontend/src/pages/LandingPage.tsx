@@ -237,14 +237,27 @@ export default function LandingPage() {
       </div>
 
       {/* Footer */}
-      <footer className="pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 dark:text-slate-500">
+      <footer className="pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 dark:text-slate-400">
         <div className="flex items-center gap-2">
           <div className="w-5 h-5 rounded-md bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px]">
             A
           </div>
-          <span className="font-semibold text-slate-600 dark:text-slate-400">ApplyTrack AI &bull; Intelligent Job Search</span>
+          <span className="font-semibold text-slate-700 dark:text-slate-300">ApplyTrack AI &bull; Intelligent Job Search</span>
         </div>
-        <p>© {new Date().getFullYear()} ApplyTrack AI. All rights reserved.</p>
+        <div className="flex items-center gap-5 font-medium">
+          <Link to="/privacy" className="hover:text-slate-900 dark:hover:text-slate-200 transition-colors">
+            Privacy Policy
+          </Link>
+          <span>&bull;</span>
+          <Link to="/terms" className="hover:text-slate-900 dark:hover:text-slate-200 transition-colors">
+            Terms of Service
+          </Link>
+          <span>&bull;</span>
+          <Link to="/login" className="hover:text-slate-900 dark:hover:text-slate-200 transition-colors">
+            Sign In
+          </Link>
+        </div>
+        <p className="text-slate-400 dark:text-slate-500">© {new Date().getFullYear()} ApplyTrack AI. All rights reserved.</p>
       </footer>
     </div>
   );

@@ -139,6 +139,14 @@ export interface SyncStatus {
     needs_review: number;
     pages_processed: number;
   };
+  queue?: {
+    pending: number;
+    processing: number;
+    completed: number;
+    failed: number;
+    is_active: boolean;
+    total_applications: number;
+  };
 }
 
 // Sync log

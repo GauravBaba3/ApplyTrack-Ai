@@ -153,6 +153,7 @@ AUTH_USER_MODEL = 'accounts.CustomUser'
 # Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        'apps.accounts.authentication.HeaderSessionAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [

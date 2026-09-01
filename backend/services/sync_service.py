@@ -38,7 +38,30 @@ class SyncService:
     
     @classmethod
     def get_sync_status(cls, user):
-        """Get the current sync status for a user."""
+        """Get the current sync and background processing status for a user."""
+        from apps.gmail_integration.models import EmailProcessingJob, JobStatus
+        from apps.applications.models import Application
+        
+        pending_jobs = EmailProcessingJob.objects.filter(
+            user=user,
+            status__in=[JobStatus.PENDING, JobStatus.RETRY]
+        ).count()
+        processing_jobs = EmailProcessingJob.objects.filter(
+            user=user,
+            status=JobStatus.PROCESSING
+        ).count()
+        completed_jobs = EmailProcessingJob.objects.filter(
+            user=user,
+            status=JobStatus.COMPLETED
+        ).count()
+        failed_jobs = EmailProcessingJob.objects.filter(
+            user=user,
+            status=JobStatus.DEAD_LETTER
+        ).count()
+        
+        is_queue_active = (pending_jobs > 0 or processing_jobs > 0)
+        app_count = Application.objects.filter(user=user).count()
+
         return {
             'status': user.gmail_sync_status or 'idle',
             'page': user.gmail_sync_page or 0,
@@ -51,17 +74,25 @@ class SyncService:
                 'new_applications': 0,
                 'needs_review': 0,
                 'pages_processed': 0
+            },
+            'queue': {
+                'pending': pending_jobs,
+                'processing': processing_jobs,
+                'completed': completed_jobs,
+                'failed': failed_jobs,
+                'is_active': is_queue_active,
+                'total_applications': app_count,
             }
         }
 
     @classmethod
     def sync_gmail_batch(cls, user, reset=False, page_size=None):
         """
-        Process a single bounded page/batch of Gmail messages.
+        Process a single bounded page/batch of Gmail messages with resumable checkpointing.
         
         Args:
             user: CustomUser instance
-            reset: If True, resets any existing sync session and starts a new cycle
+            reset: If True, resets any existing sync session and starts a new cycle from page 1
             page_size: Optional page size override
             
         Returns:
@@ -75,10 +106,34 @@ class SyncService:
         now = timezone.now()
         is_stale_lock = user.gmail_sync_started_at and (now - user.gmail_sync_started_at > timedelta(minutes=5))
         
-        if user.gmail_sync_status == 'running' and not reset and not is_stale_lock:
+        if reset:
+            # Explicit user request to start fresh sync cycle
+            user.gmail_sync_status = 'running'
+            user.gmail_sync_started_at = now
+            user.gmail_sync_page = 0
+            user.gmail_sync_cursor = None
+            user.gmail_sync_batch_stats = {
+                'emails_scanned': 0,
+                'job_related_emails': 0,
+                'applications_updated': 0,
+                'new_applications': 0,
+                'needs_review': 0,
+                'pages_processed': 0
+            }
+            user.save(update_fields=[
+                'gmail_sync_status', 'gmail_sync_started_at', 'gmail_sync_page',
+                'gmail_sync_cursor', 'gmail_sync_batch_stats'
+            ])
+        elif user.gmail_sync_cursor:
+            # Resuming from persisted checkpoint cursor after interruption / pause
+            logger.info(f"Resuming sync for user {user.email} from checkpoint page {user.gmail_sync_page + 1}")
+            user.gmail_sync_status = 'running'
+            user.gmail_sync_started_at = now
+            user.save(update_fields=['gmail_sync_status', 'gmail_sync_started_at'])
+        elif user.gmail_sync_status == 'running' and not is_stale_lock:
             # Continuing actively running multi-page batch session
             logger.info(f"Sync running for user {user.email}, page {user.gmail_sync_page + 1}")
-        elif reset or is_stale_lock or user.gmail_sync_status in ('idle', 'failed'):
+        elif user.gmail_sync_status in ('idle', 'failed') or is_stale_lock:
             # Initialize fresh sync cycle
             user.gmail_sync_status = 'running'
             user.gmail_sync_started_at = now
@@ -168,6 +223,8 @@ class SyncService:
                         logger.error(f"Failed to process message {msg_id}: {str(e)}")
                         continue
             
+
+
             # Update cumulative batch stats
             cumulative = user.gmail_sync_batch_stats or {}
             cumulative['emails_scanned'] = cumulative.get('emails_scanned', 0) + batch_result['emails_scanned']

@@ -31,7 +31,7 @@ class OpenRouterProvider(BaseClassifierProvider):
 
         api_key = getattr(settings, 'OPENROUTER_API_KEY', '')
         model = getattr(settings, 'OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instruct')
-        timeout = getattr(settings, 'AI_PROVIDER_TIMEOUT_SECONDS', 15)
+        timeout = min(6, getattr(settings, 'AI_PROVIDER_TIMEOUT_SECONDS', 6))
 
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
@@ -68,8 +68,7 @@ class OpenRouterProvider(BaseClassifierProvider):
                 self.trigger_cooldown(seconds=delay, reason=f"OpenRouter rate limited (429, Retry-After: {delay}s)")
             else:
                 logger.warning(f"OpenRouter API error HTTP {resp.status_code}: {resp.text[:200]}")
-                if resp.status_code in [500, 502, 503, 504]:
-                    self.trigger_cooldown(seconds=30, reason=f"OpenRouter server error ({resp.status_code})")
+                self.trigger_cooldown(seconds=60, reason=f"OpenRouter error ({resp.status_code})")
         except requests.exceptions.Timeout:
             logger.warning("OpenRouter API request timed out")
             self.trigger_cooldown(seconds=30, reason="Timeout")

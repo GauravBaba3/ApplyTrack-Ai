@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { gmailApi, authApi } from '../services/api';
-import { SyncSummary, User } from '../types';
+import { SyncSummary, SyncStatus, User } from '../types';
 import { useToast } from './ToastContext';
-
 import { cacheService } from '../services/cacheService';
 
 const GMAIL_AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const QUEUE_POLL_INTERVAL_MS = 2500; // 2.5 seconds during active queue processing
 
 interface SyncContextType {
   isSyncing: boolean;
@@ -40,6 +40,56 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const invalidateDatasets = useCallback(() => {
+    cacheService.remove('dashboard:stats');
+    cacheService.remove('dashboard:analytics');
+    cacheService.remove('dashboard:recent');
+    cacheService.remove('applications:list');
+    cacheService.remove('emails:list');
+    cacheService.remove('analytics:data');
+    cacheService.remove('analytics:stats');
+    cacheService.remove('settings:user');
+    setDataVersion((prev) => prev + 1);
+  }, []);
+
+  const monitorQueueProcessing = useCallback(async () => {
+    // Poll queue processing until all jobs complete
+    let pollCount = 0;
+    const maxPolls = 60; // Up to ~2.5 minutes of continuous monitoring
+
+    while (isMounted.current && pollCount < maxPolls) {
+      pollCount++;
+      await new Promise((resolve) => setTimeout(resolve, QUEUE_POLL_INTERVAL_MS));
+      if (!isMounted.current) break;
+
+      try {
+        const statusRes = await gmailApi.getStatus();
+        const statusData: SyncStatus = statusRes.data;
+
+        if (statusData?.queue) {
+          const { pending, processing, completed, failed, is_active, total_applications } = statusData.queue;
+          
+          // Invalidate cache and bump version on every poll step so UI increments in real-time
+          invalidateDatasets();
+
+          if (!is_active || (pending === 0 && processing === 0)) {
+            // All background jobs completed
+            success(
+              'Processing completed',
+              `${total_applications || 0} applications tracked and pipeline updated.`
+            );
+            break;
+          }
+        } else {
+          invalidateDatasets();
+          break;
+        }
+      } catch (err) {
+        // Continue loop if a single status check has a temporary network glitch
+      }
+    }
+  }, [invalidateDatasets, success]);
+
   const runSyncLoop = useCallback(
     async (reset: boolean = false) => {
       if (isLoopRunning.current) return;
@@ -51,68 +101,77 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
       let isReset = reset;
       let hasShownStartToast = false;
+      let consecutiveErrors = 0;
 
       try {
+        // Phase 1: Gmail Ingestion Loop with Automatic Resumption
         while (isMounted.current) {
-          const response = await gmailApi.sync({ reset: isReset });
-          isReset = false;
-          const data: SyncSummary = response.data;
+          try {
+            const response = await gmailApi.sync({ reset: isReset });
+            isReset = false;
+            consecutiveErrors = 0;
+            const data: SyncSummary = response.data;
 
-          if (!isMounted.current) break;
+            if (!isMounted.current) break;
 
-          setProgress(data);
-          cacheService.set('sync:progress', data);
+            setProgress(data);
+            cacheService.set('sync:progress', data);
+            invalidateDatasets();
 
-          // Increment dataVersion to notify open pages to re-fetch reactively
-          setDataVersion((prev) => prev + 1);
-
-          // Show "Gmail sync started" toast only once per sync session
-          if (!hasShownStartToast) {
-            info('Gmail sync started', "We're processing your emails in the background.");
-            hasShownStartToast = true;
-          }
-
-          // Check for completion or termination
-          if (!data.has_more || data.status === 'completed' || data.status === 'failed') {
-            setSyncStatus(data.status || 'completed');
-            if (data.status === 'failed') {
-              const errMsg = data.message || 'Sync encountered an error';
-              setError(errMsg);
-              toastError('Gmail sync failed', errMsg);
-            } else {
-              // Successfully completed whole sync cycle
-              const cumulative = data.cumulative || {
-                emails_scanned: data.emails_scanned || 0,
-                job_related_emails: data.job_related_emails || 0,
-                applications_updated: data.applications_updated || 0,
-                new_applications: data.new_applications || 0,
-              };
-
-              const msg =
-                cumulative.emails_scanned > 0
-                  ? `${cumulative.emails_scanned} emails imported and queued for processing.`
-                  : 'Mailbox is up to date.';
-
-              success('Gmail sync completed', msg);
-              const nowIso = new Date().toISOString();
-              setLastSync(nowIso);
-              cacheService.set('sync:last_sync', nowIso);
-
-              // Invalidate cached datasets so pages fetch latest server state
-              cacheService.remove('dashboard:stats');
-              cacheService.remove('dashboard:analytics');
-              cacheService.remove('dashboard:recent');
-              cacheService.remove('applications:list');
-              cacheService.remove('emails:list');
-              cacheService.remove('analytics:data');
-              cacheService.remove('settings:user');
+            // Show "Gmail sync started" toast once per session
+            if (!hasShownStartToast) {
+              info('Gmail sync started', "Importing messages and processing in background...");
+              hasShownStartToast = true;
             }
-            break;
-          }
 
-          // Controlled delay between batches (1.5 seconds)
-          await new Promise((resolve) => setTimeout(resolve, 1500));
+            // Check if ingestion finished
+            if (!data.has_more || data.status === 'completed' || data.status === 'failed') {
+              if (data.status === 'failed') {
+                const errMsg = data.message || 'Sync encountered an error';
+                setError(errMsg);
+                setSyncStatus('failed');
+                toastError('Gmail sync failed', errMsg);
+              } else {
+                setSyncStatus('completed');
+                const cumulative = data.cumulative || {
+                  emails_scanned: data.emails_scanned || 0,
+                  job_related_emails: data.job_related_emails || 0,
+                  applications_updated: data.applications_updated || 0,
+                  new_applications: data.new_applications || 0,
+                };
+
+                const msg =
+                  cumulative.emails_scanned > 0
+                    ? `${cumulative.emails_scanned} emails imported and queued for processing.`
+                    : 'Mailbox is up to date.';
+
+                info('Gmail import completed', msg);
+                const nowIso = new Date().toISOString();
+                setLastSync(nowIso);
+                cacheService.set('sync:last_sync', nowIso);
+                invalidateDatasets();
+              }
+              break;
+            }
+
+            // Controlled delay between batches (1.5 seconds)
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          } catch (batchErr: any) {
+            consecutiveErrors++;
+            if (consecutiveErrors <= 3) {
+              info('Sync interrupted', 'Retrying automatically from checkpoint...');
+              await new Promise((resolve) => setTimeout(resolve, 3000));
+              continue;
+            }
+            throw batchErr;
+          }
         }
+
+        // Phase 2: Background Worker Queue Monitoring & Progressive UI Updates
+        if (isMounted.current) {
+          await monitorQueueProcessing();
+        }
+
       } catch (err: any) {
         if (isMounted.current) {
           console.error('Global background Gmail sync failed:', err);
@@ -124,14 +183,16 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       } finally {
         if (isMounted.current) {
           setIsSyncing(false);
+          setSyncStatus('idle');
+          invalidateDatasets();
         }
         isLoopRunning.current = false;
       }
     },
-    [info, success, toastError]
+    [info, success, toastError, invalidateDatasets, monitorQueueProcessing]
   );
 
-  // Check sync status and set user on application mount
+  // Check sync status and auto-resume on application mount
   useEffect(() => {
     let cancel = false;
 
@@ -155,6 +216,23 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           cacheService.set('sync:last_sync', user.gmail_last_sync);
         }
 
+        // Check if there is an in-progress historical sync or active queue to auto-resume
+        try {
+          const statusRes = await gmailApi.getStatus();
+          const statusData: SyncStatus = statusRes.data;
+
+          if (statusData?.status === 'running' || statusData?.has_more) {
+            // Automatically resume interrupted sync from persisted checkpoint
+            runSyncLoop(false);
+            return;
+          } else if (statusData?.queue?.is_active) {
+            // Automatically resume observing queue processing
+            monitorQueueProcessing();
+          }
+        } catch (statusErr) {
+          // Fall through to normal interval check
+        }
+
         const lastSyncDate = user.gmail_last_sync ? new Date(user.gmail_last_sync) : null;
         const now = new Date();
 
@@ -175,7 +253,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     return () => {
       cancel = true;
     };
-  }, [runSyncLoop]);
+  }, [runSyncLoop, monitorQueueProcessing]);
 
   // Periodic 10-minute incremental sync interval
   useEffect(() => {

@@ -200,12 +200,17 @@ class GoogleCallbackView(APIView):
             )
 
             login(request, user)
+            request.session.save()
+            session_key = request.session.session_key or ''
             from django.middleware.csrf import get_token
             csrf_token = get_token(request)
 
             default_frontend = 'https://applytrackai.in' if getattr(settings, 'IS_PRODUCTION', False) else 'http://localhost:5174'
             frontend_url = os.getenv('FRONTEND_URL', default_frontend).rstrip('/')
-            response = redirect(f"{frontend_url}/dashboard?auth=success")
+            
+            # Pass session_token in URL query param for cross-domain SPA clients (e.g. applytrackai.in -> render.com)
+            token_param = f"&session_token={session_key}" if session_key else ""
+            response = redirect(f"{frontend_url}/dashboard?auth=success{token_param}")
             response.set_cookie(
                 key='csrftoken',
                 value=csrf_token,

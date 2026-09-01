@@ -31,7 +31,7 @@ class GeminiProvider(BaseClassifierProvider):
 
         api_key = getattr(settings, 'GEMINI_API_KEY', '')
         model = getattr(settings, 'GEMINI_MODEL', 'gemini-1.5-flash')
-        timeout = getattr(settings, 'AI_PROVIDER_TIMEOUT_SECONDS', 15)
+        timeout = min(6, getattr(settings, 'AI_PROVIDER_TIMEOUT_SECONDS', 6))
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         headers = {"Content-Type": "application/json"}
@@ -69,8 +69,7 @@ class GeminiProvider(BaseClassifierProvider):
                 self.trigger_cooldown(seconds=delay, reason=f"Gemini rate limited (429, Retry-After: {delay}s)")
             else:
                 logger.warning(f"Gemini API error HTTP {resp.status_code}: {resp.text[:200]}")
-                if resp.status_code in [500, 502, 503, 504]:
-                    self.trigger_cooldown(seconds=30, reason=f"Gemini server error ({resp.status_code})")
+                self.trigger_cooldown(seconds=60, reason=f"Gemini error ({resp.status_code})")
         except requests.exceptions.Timeout:
             logger.warning("Gemini API request timed out")
             self.trigger_cooldown(seconds=30, reason="Timeout")

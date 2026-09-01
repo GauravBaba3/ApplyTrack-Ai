@@ -91,6 +91,7 @@ class SyncStatusResponseSerializer(serializers.Serializer):
     has_more = serializers.BooleanField()
     last_sync = serializers.DateTimeField(allow_null=True)
     stats = serializers.DictField()
+    queue = serializers.DictField(required=False, default=dict)
 
 
 class EmailProcessingJobSerializer(serializers.ModelSerializer):

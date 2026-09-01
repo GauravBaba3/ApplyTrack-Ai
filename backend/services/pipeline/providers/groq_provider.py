@@ -31,7 +31,7 @@ class GroqProvider(BaseClassifierProvider):
 
         api_key = getattr(settings, 'GROQ_API_KEY', '')
         model = getattr(settings, 'GROQ_MODEL', 'llama-3.3-70b-versatile')
-        timeout = getattr(settings, 'AI_PROVIDER_TIMEOUT_SECONDS', 15)
+        timeout = min(6, getattr(settings, 'AI_PROVIDER_TIMEOUT_SECONDS', 6))
 
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
@@ -66,8 +66,7 @@ class GroqProvider(BaseClassifierProvider):
                 self.trigger_cooldown(seconds=delay, reason=f"Groq rate limited (429, Retry-After: {delay}s)")
             else:
                 logger.warning(f"Groq API error HTTP {resp.status_code}: {resp.text[:200]}")
-                if resp.status_code in [500, 502, 503, 504]:
-                    self.trigger_cooldown(seconds=30, reason=f"Groq server error ({resp.status_code})")
+                self.trigger_cooldown(seconds=60, reason=f"Groq error ({resp.status_code})")
         except requests.exceptions.Timeout:
             logger.warning("Groq API request timed out")
             self.trigger_cooldown(seconds=30, reason="Timeout")

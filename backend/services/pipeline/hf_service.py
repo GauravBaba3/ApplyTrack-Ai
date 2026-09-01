@@ -30,6 +30,8 @@ class HFService:
         "not job related"
     ]
 
+    _cooldown_until: float = 0.0
+
     @classmethod
     def classify_email_zero_shot(cls, text: str, labels: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         """
@@ -38,6 +40,10 @@ class HFService:
         Returns:
             Dict with 'top_label', 'score', and 'all_scores', or None if unavailable/failed.
         """
+        import time
+        if time.time() < cls._cooldown_until:
+            return None
+
         api_key = getattr(settings, 'HF_TOKEN', '') or getattr(settings, 'HUGGINGFACE_API_KEY', '')
         if not api_key:
             logger.debug("HF_TOKEN / HUGGINGFACE_API_KEY not configured. Skipping HF tier.")
@@ -63,7 +69,7 @@ class HFService:
         }
 
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=12)
+            response = requests.post(url, headers=headers, json=payload, timeout=6)
             if response.status_code == 200:
                 data = response.json()
                 scores = data.get('scores', [])
@@ -80,10 +86,13 @@ class HFService:
             elif response.status_code == 503:
                 # Model is loading
                 logger.info(f"Hugging Face model {model_name} is currently loading.")
+                cls._cooldown_until = time.time() + 30
                 return None
             else:
                 logger.warning(f"Hugging Face API returned status {response.status_code}: {response.text[:200]}")
+                cls._cooldown_until = time.time() + 60
                 return None
         except Exception as e:
             logger.warning(f"Hugging Face inference request failed: {str(e)}")
+            cls._cooldown_until = time.time() + 60
             return None

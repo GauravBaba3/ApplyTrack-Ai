@@ -31,10 +31,10 @@ export default function LoginPage() {
     <div className="min-h-screen w-full flex flex-col bg-slate-50 dark:bg-[#0b0f19] text-slate-900 dark:text-slate-100 transition-colors duration-200 selection:bg-indigo-500/20">
       
       {/* Global Top Navbar: Back button on the far left, Theme toggle on the far right */}
-      <header className="w-full px-6 sm:px-10 py-4.5 flex items-center justify-between border-b border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-[#0b0f19]/80 backdrop-blur-md sticky top-0 z-30">
+      <header className="w-full px-6 sm:px-10 py-4 flex items-center justify-between border-b border-slate-200/80 dark:border-white/[0.07] bg-white/70 dark:bg-[#080c14]/70 backdrop-blur-xl sticky top-0 z-30">
         <Link
           to="/"
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800/90 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-700 shadow-2xs transition-all active:scale-98"
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border border-slate-200/80 dark:border-white/[0.08] bg-white/80 dark:bg-white/[0.05] text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.09] shadow-sm backdrop-blur-md transition-all active:scale-98"
         >
           <ArrowLeft size={14} />
           <span>Back to Home</span>
@@ -48,24 +48,23 @@ export default function LoginPage() {
       {/* Main Split-Screen Container */}
       <div className="flex-1 flex flex-col lg:flex-row w-full">
         
-        {/* Left Column: Product Showcase & Simulation (Themed for both Light & Dark) */}
-        <div className="hidden lg:flex lg:w-1/2 relative bg-slate-100/70 dark:bg-slate-950/60 border-r border-slate-200/80 dark:border-slate-800/80 flex-col justify-between p-12 xl:p-16 overflow-hidden transition-colors duration-200">
-          {/* Subtle ambient lighting for both light & dark */}
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-100/40 via-transparent to-blue-100/30 dark:from-indigo-950/30 dark:via-transparent dark:to-blue-950/20 pointer-events-none" />
-          <div className="absolute top-1/4 -left-20 w-80 h-80 bg-indigo-400/10 dark:bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute bottom-1/4 right-0 w-96 h-96 bg-blue-400/10 dark:bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+        {/* Left Column: Product Showcase & Simulation */}
+        <div className="hidden lg:flex lg:w-1/2 relative bg-slate-100/50 dark:bg-[#090e1c]/60 border-r border-slate-200/80 dark:border-white/[0.07] flex-col justify-between p-12 xl:p-16 overflow-hidden transition-colors duration-200 backdrop-blur-sm">
+          {/* Subtle ambient lighting */}
+          <div className="absolute top-1/4 -left-20 w-80 h-80 bg-indigo-500/10 dark:bg-indigo-600/[0.08] rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-1/4 right-0 w-96 h-96 bg-blue-500/10 dark:bg-blue-600/[0.06] rounded-full blur-3xl pointer-events-none" />
 
           {/* Brand header */}
           <div className="relative z-10">
             <Link to="/" className="inline-flex items-center gap-3 group">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-md shadow-indigo-500/25 group-hover:scale-105 transition-transform">
                 A
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-lg tracking-tight text-slate-900 dark:text-white">
                   ApplyTrack <span className="text-indigo-600 dark:text-indigo-400">AI</span>
                 </span>
-                <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80 rounded-full">
+                <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20 rounded-full">
                   OS
                 </span>
               </div>
@@ -84,8 +83,8 @@ export default function LoginPage() {
             </div>
 
             {/* Simulated Live Inbox Widget */}
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/80 backdrop-blur-md p-5 shadow-xl shadow-slate-200/50 dark:shadow-none space-y-3.5 transition-colors duration-200">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 text-xs">
+            <div className="glass-card p-5 space-y-3.5">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-white/[0.06] text-xs">
                 <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 font-semibold">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   <span>Live Inbox Intelligence</span>
@@ -95,9 +94,9 @@ export default function LoginPage() {
 
               {/* Email update items */}
               <div className="space-y-2.5">
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/60 flex items-center justify-between gap-3">
+                <div className="p-3 rounded-xl bg-white/50 dark:bg-white/[0.03] border border-slate-200/70 dark:border-white/[0.06] flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-xs shrink-0">
+                    <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-xs shrink-0">
                       S
                     </div>
                     <div className="min-w-0">
@@ -105,14 +104,14 @@ export default function LoginPage() {
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">Round 2 scheduled with Hiring Team</p>
                     </div>
                   </div>
-                  <span className="px-2.5 py-0.5 text-[10px] font-bold rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 shrink-0">
+                  <span className="badge badge-interview text-[10px]">
                     Interview
                   </span>
                 </div>
 
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/60 flex items-center justify-between gap-3">
+                <div className="p-3 rounded-xl bg-white/50 dark:bg-white/[0.03] border border-slate-200/70 dark:border-white/[0.06] flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs shrink-0">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs shrink-0">
                       G
                     </div>
                     <div className="min-w-0">
@@ -120,7 +119,7 @@ export default function LoginPage() {
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">Software Engineer (L4) application received</p>
                     </div>
                   </div>
-                  <span className="px-2.5 py-0.5 text-[10px] font-bold rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60 shrink-0">
+                  <span className="badge badge-applied text-[10px]">
                     Applied
                   </span>
                 </div>
@@ -129,14 +128,14 @@ export default function LoginPage() {
           </div>
 
           {/* Left Footer Info */}
-          <div className="relative z-10 pt-6 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+          <div className="relative z-10 pt-6 border-t border-slate-200/80 dark:border-white/[0.06] flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
             <span>Enterprise OAuth 2.0 Security</span>
             <span>Zero Email Modification</span>
           </div>
         </div>
 
-        {/* Right Column: Authentication Panel (Themed for both Light & Dark) */}
-        <div className="flex-1 flex flex-col justify-between p-6 sm:p-12 lg:p-16 bg-white dark:bg-[#0b0f19] transition-colors duration-200">
+        {/* Right Column: Authentication Panel */}
+        <div className="flex-1 flex flex-col justify-between p-6 sm:p-12 lg:p-16 bg-white dark:bg-[#080c14] transition-colors duration-200">
           
           {/* Auth Core Container */}
           <div className="w-full max-w-md mx-auto my-auto py-8 space-y-7">

@@ -1,25 +1,36 @@
 """
-Sync service for processing Gmail emails and updating applications.
+Sync service for processing Gmail emails, canonical compression to R2, and tiered AI classification.
 """
 import logging
+from datetime import timedelta
 from django.utils import timezone
 from django.db import transaction
+from django.conf import settings
 
 from apps.applications.models import Application, StatusHistory, ApplicationStatus
-from apps.gmail_integration.models import ProcessedEmail, ProcessingStatus, EmailEventType
+from apps.gmail_integration.models import (
+    ProcessedEmail,
+    ProcessingStatus,
+    EmailEventType,
+    TriagePriority,
+    R2StorageStatus,
+    SyncLog
+)
 from apps.ai_processing.models import AIRequestLog
 
 from .gmail_service import GmailService
 from .email_classifier import EmailClassifier
 from .groq_service import GroqService
 from .application_matcher import ApplicationMatcher
+from .canonical_email import CanonicalEmail
+from .storage.object_storage_service import ObjectStorageService
+from .storage.b2_service import B2StorageService, StorageStatus
+from .storage.retention_service import RetentionService
+from .queue.job_scheduler import JobScheduler
+from .pipeline.classifier_pipeline import ClassifierPipeline
+from .pipeline.triage_service import TriageService
 
 logger = logging.getLogger(__name__)
-
-
-from django.conf import settings
-from datetime import timedelta
-from apps.gmail_integration.models import SyncLog
 
 
 class SyncService:
@@ -58,7 +69,7 @@ class SyncService:
         """
         user.refresh_from_db()
         page_limit = page_size or getattr(settings, 'GMAIL_SYNC_PAGE_SIZE', 25)
-        initial_days = getattr(settings, 'GMAIL_SYNC_INITIAL_DAYS', 30)
+        initial_days = getattr(settings, 'GMAIL_INITIAL_SYNC_DAYS', getattr(settings, 'GMAIL_SYNC_INITIAL_DAYS', 365))
         
         # Check active concurrency lock (avoid duplicate running syncs)
         now = timezone.now()
@@ -116,8 +127,12 @@ class SyncService:
         try:
             gmail_service = GmailService(user)
             
-            # Determine sync mode: Initial (bounded historical days) vs Incremental (after last sync)
-            after_timestamp = user.gmail_last_sync if user.gmail_last_sync else None
+            # Determine sync mode: Initial (bounded historical days) vs Incremental (after last sync with lookback buffer)
+            if reset or not user.gmail_last_sync:
+                after_timestamp = None
+            else:
+                # 1-day safety buffer before last sync to ensure no timezone edge cases or delayed emails are missed
+                after_timestamp = user.gmail_last_sync - timedelta(days=1)
             
             message_stubs, next_page_token = gmail_service.get_message_page(
                 page_token=user.gmail_sync_cursor,
@@ -139,7 +154,7 @@ class SyncService:
                     ).values_list('gmail_message_id', flat=True)
                 )
                 
-                # Fetch full details and process only new, unprocessed messages
+                # Fetch full details and ingest only new, unprocessed messages
                 for stub in message_stubs:
                     msg_id = stub.get('id')
                     if not msg_id or msg_id in existing_message_ids:
@@ -208,230 +223,87 @@ class SyncService:
     @classmethod
     @transaction.atomic
     def _process_message(cls, message, user, result):
-        """Process a single email message."""
+        """
+        Process a single email message through the canonical Backblaze B2 ingestion,
+        high-recall deterministic triage (P1/P2/P3), metadata storage in Neon PostgreSQL,
+        and durable job queueing for worker processing.
+        """
         gmail_message_id = message.get('gmail_message_id')
-        
-        # Check if already processed
+        if not gmail_message_id:
+            return
+
+        # Check if already processed (Idempotency)
         existing_email = ProcessedEmail.objects.filter(
             user=user,
             gmail_message_id=gmail_message_id
         ).first()
-        
+
         if existing_email:
             logger.debug(f"Message {gmail_message_id} already processed")
             return
-        
-        # Step 1: Rule-based classification
-        is_job_related, rule_confidence = EmailClassifier.is_job_related(message)
-        
-        company = ''
-        job_title = ''
-        detected_status = ApplicationStatus.UNKNOWN
-        event_type = EmailEventType.OTHER
-        interview_date = None
-        final_confidence = rule_confidence
 
-        # Step 2: AI classification (consult Groq for intelligent classification)
-        if rule_confidence >= 0.15 or is_job_related:
-            ai_result = GroqService.classify_email(message, user)
-            
-            # Log AI request
-            AIRequestLog.objects.create(
-                user=user,
-                request_type='email_classification',
-                tokens_used=ai_result.get('tokens', 0),
-                success=ai_result.get('is_job_related') is not None
-            )
-            
-            ai_is_job = ai_result.get('is_job_related', False)
-            ai_conf = ai_result.get('confidence', 0.0)
-            
-            if ai_is_job:
-                is_job_related = True
-                final_confidence = max(rule_confidence, ai_conf)
-                company = ai_result.get('company') or ''
-                job_title = ai_result.get('job_title') or ''
-                detected_status = ai_result.get('status') or ApplicationStatus.APPLIED
-                event_type = ai_result.get('event_type') or EmailEventType.OTHER
-                interview_date = ai_result.get('interview_date')
-            else:
-                if rule_confidence < 0.6:
-                    is_job_related = False
-                    final_confidence = min(rule_confidence, 0.3)
-        
-        final_is_job_related = is_job_related and (final_confidence >= 0.35)
-        
-        if not final_is_job_related:
-            # Store as ignored
-            ProcessedEmail.objects.create(
-                user=user,
-                gmail_message_id=gmail_message_id,
-                thread_id=message.get('thread_id', ''),
-                sender=message.get('sender', ''),
-                sender_domain=message.get('sender_domain', ''),
-                subject=message.get('subject', ''),
-                received_at=message.get('received_at', timezone.now()),
-                snippet=message.get('snippet', '')[:500],
-                is_job_related=False,
-                processing_status=ProcessingStatus.IGNORED,
-                ai_confidence=final_confidence,
-                company=company,
-                job_title=job_title,
-                detected_status=detected_status,
-                event_type=event_type
-            )
-            return
-        
-        # Increment job-related counter
-        result['job_related_emails'] += 1
-        
-        # Map detected status to ApplicationStatus
-        if detected_status:
-            try:
-                detected_status = ApplicationStatus(detected_status)
-            except ValueError:
-                detected_status = ApplicationStatus.UNKNOWN
-        else:
-            detected_status = ApplicationStatus.UNKNOWN
-        
-        # Map event type
-        if event_type:
-            try:
-                event_type = EmailEventType(event_type)
-            except ValueError:
-                event_type = EmailEventType.OTHER
-        else:
-            event_type = EmailEventType.OTHER
-        
-        # Parse interview_date safely
-        parsed_interview_date = None
-        if interview_date:
-            try:
-                if isinstance(interview_date, str):
-                    from dateutil.parser import parse as parse_dt
-                    dt = parse_dt(interview_date)
-                    parsed_interview_date = timezone.make_aware(dt) if timezone.is_naive(dt) else dt
-                elif hasattr(interview_date, 'strftime'):
-                    parsed_interview_date = timezone.make_aware(interview_date) if timezone.is_naive(interview_date) else interview_date
-            except Exception:
-                parsed_interview_date = None
+        # Step 1: Canonical Email Normalization & Lossless Compression (Strictly No Attachments)
+        raw_msg_data = message.get('raw') or {}
+        canonical = CanonicalEmail.from_raw_gmail_message(raw_msg_data, message)
+        compressed_bytes, content_sha256, compressed_size = canonical.to_compressed_payload()
 
-        # Create processed email record
+        # Retention expiration date calculation (default 90 days / 3 months)
+        received_at_val = message.get('received_at') or timezone.now()
+        raw_retention_expires_at = RetentionService.calculate_expiration_date(received_at_val)
+
+        # Generate standard Object Storage Key (Backblaze B2)
+        r2_key = CanonicalEmail.generate_object_key(
+            user_id=user.id,
+            received_dt=received_at_val,
+            message_id=gmail_message_id
+        )
+
+        # Step 2: Backblaze B2 Cloud Object Storage Upload
+        r2_uploaded = ObjectStorageService.upload_compressed_email(
+            object_key=r2_key,
+            data_bytes=compressed_bytes,
+            sha256_hash=content_sha256,
+            metadata={
+                'user_id': str(user.id),
+                'gmail_message_id': str(gmail_message_id),
+                'sender': str(message.get('sender', ''))[:100],
+            }
+        )
+        r2_storage_status = StorageStatus.UPLOADED if r2_uploaded else StorageStatus.FAILED
+
+        # Step 3: Fast, High-Recall Deterministic Triage (P1 / P2 / P3)
+        triage_info = TriageService.triage_email(message)
+        triage_priority = triage_info.get('priority', TriagePriority.P2)
+        triage_score = float(triage_info.get('triage_score', 0.5))
+
+        # Step 4: Persist metadata in Neon PostgreSQL (Strictly no full email body in DB)
+        is_job_likely = triage_priority in [TriagePriority.P1, TriagePriority.P2]
         processed_email = ProcessedEmail.objects.create(
             user=user,
             gmail_message_id=gmail_message_id,
             thread_id=message.get('thread_id', ''),
+            r2_object_key=r2_key,
+            r2_storage_status=r2_storage_status,
+            r2_content_sha256=content_sha256,
+            r2_compression_version=canonical.COMPRESSION_VERSION,
+            compressed_size_bytes=compressed_size,
+            raw_retention_expires_at=raw_retention_expires_at,
+            triage_priority=triage_priority,
             sender=message.get('sender', ''),
             sender_domain=message.get('sender_domain', ''),
             subject=message.get('subject', ''),
-            received_at=message.get('received_at', timezone.now()),
+            received_at=received_at_val,
             snippet=message.get('snippet', '')[:500],
-            is_job_related=True,
-            company=company or '',
-            job_title=job_title or '',
-            detected_status=detected_status,
-            event_type=event_type,
-            interview_date=parsed_interview_date,
-            ai_confidence=final_confidence,
-            processing_status=ProcessingStatus.DETECTED
+            is_job_related=is_job_likely,
+            processing_status=ProcessingStatus.DETECTED,
+            ai_confidence=triage_score
         )
-        
-        # Match to existing application or create new one
-        application, match_confidence, is_new = ApplicationMatcher.match_email_to_application(
-            {
-                'company': company or '',
-                'job_title': job_title or '',
-                'detected_status': detected_status,
-                'confidence': final_confidence,
-                'sender': message.get('sender', ''),
-                'sender_domain': message.get('sender_domain', ''),
-                'subject': message.get('subject', ''),
-                'thread_id': message.get('thread_id', ''),
-                'received_at': message.get('received_at', timezone.now())
-            },
-            user
-        )
-        
-        if is_new and match_confidence >= 0.5:
-            # Create new application
-            try:
-                application = ApplicationMatcher.create_application_from_email(
-                    {
-                        'company': company or '',
-                        'job_title': job_title or '',
-                        'detected_status': detected_status,
-                        'confidence': final_confidence,
-                        'received_at': message.get('received_at', timezone.now())
-                    },
-                    user
-                )
-                result['new_applications'] += 1
-                
-                # Link email to application
-                processed_email.application_id = application.id
-                processed_email.save()
-                
-                # Create status history
-                StatusHistory.objects.create(
-                    application=application,
-                    previous_status=None,
-                    new_status=application.current_status,
-                    source='ai',
-                    related_email_id=processed_email.id
-                )
-                
-            except Exception as e:
-                logger.error(f"Failed to create new application: {str(e)}")
-                processed_email.processing_status = ProcessingStatus.NEEDS_REVIEW
-                processed_email.save()
-                result['needs_review'] += 1
-        elif application:
-            # Update existing application
-            old_status = application.current_status
-            
-            # Only update if AI confidence is reasonable or it's a clear status change
-            if final_confidence >= 0.6 or detected_status != ApplicationStatus.UNKNOWN:
-                # Update application status
-                application.current_status = detected_status
-                application.last_email_date = message.get('received_at', timezone.now())
-                application.last_activity_date = timezone.now()
-                application.confidence = max(application.confidence, final_confidence)
-                application.save()
-                
-                # Link email to application
-                processed_email.application_id = application.id
-                processed_email.save()
-                
-                # Create status history if status changed
-                if old_status != detected_status:
-                    StatusHistory.objects.create(
-                        application=application,
-                        previous_status=old_status,
-                        new_status=detected_status,
-                        source='ai',
-                        related_email_id=processed_email.id
-                    )
-                    result['applications_updated'] += 1
-            else:
-                # Low confidence, mark as needs review
-                processed_email.processing_status = ProcessingStatus.NEEDS_REVIEW
-                processed_email.save()
-                result['needs_review'] += 1
-                
-                # Mark application as needs review
-                application.needs_review = True
-                application.save()
-        else:
-            # No match and not a new application, mark as needs review
-            processed_email.processing_status = ProcessingStatus.NEEDS_REVIEW
-            processed_email.save()
-            result['needs_review'] += 1
-        
-        # If confidence is low, mark as needs review
-        if final_confidence < 0.7 and processed_email.processing_status != ProcessingStatus.NEEDS_REVIEW:
-            processed_email.processing_status = ProcessingStatus.NEEDS_REVIEW
-            processed_email.save()
-            result['needs_review'] += 1
+
+        # Step 5: Enqueue Durable Processing Job in Neon PostgreSQL Queue
+        JobScheduler.enqueue_email_job(processed_email, user, message)
+
+        if is_job_likely:
+            result['job_related_emails'] += 1
     
     @classmethod
     def get_needs_review_items(cls, user):

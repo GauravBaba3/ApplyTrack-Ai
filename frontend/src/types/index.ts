@@ -4,8 +4,8 @@ export type ApplicationSource =
   | 'Referral' | 'Email' | 'Other';
 
 export type ApplicationStatus = 
-  | 'Applied' | 'Assessment' | 'Interview' | 'Offer' | 'Rejected'
-  | 'Withdrawn' | 'Pending' | 'No Response' | 'Ghosted' | 'Unknown';
+  | 'Applied' | 'Under Review' | 'Assessment' | 'Interview' | 'Offer' | 'Rejected'
+  | 'Withdrawn' | 'No Response' | 'Stale' | 'Ghosted' | 'Needs Review' | 'Unknown';
 
 export type EmailEventType = 
   | 'application_confirmation' | 'application_received' | 'interview_invitation'
@@ -32,6 +32,9 @@ export interface Application {
   last_activity_date?: string;
   confidence: number;
   notes?: string;
+  review_reason?: string;
+  recruiter_name?: string;
+  recruiter_email?: string;
   is_ai_detected: boolean;
   is_manual: boolean;
   needs_review: boolean;
@@ -51,11 +54,18 @@ export interface ApplicationCreateDTO {
   notes?: string;
 }
 
+export type TriagePriority = 'P1' | 'P2' | 'P3';
+
 // Processed Email model
 export interface ProcessedEmail {
   id: number;
   gmail_message_id: string;
   thread_id: string;
+  object_storage_key?: string;
+  b2_object_key?: string;
+  r2_object_key?: string;
+  compressed_size_bytes?: number;
+  triage_priority?: TriagePriority;
   sender: string;
   sender_domain?: string;
   subject: string;

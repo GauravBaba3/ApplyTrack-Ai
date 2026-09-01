@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  Settings, Mail, Shield, Bell, Calendar, LogOut, CheckCircle2, 
-  XCircle, User as UserIcon, Clock, Lock, RefreshCw, KeyRound, 
-  AlertTriangle, Check, Sliders 
+  Mail, CheckCircle2, XCircle, Clock, RefreshCw, AlertTriangle, Sliders 
 } from 'lucide-react';
 import { authApi } from '../services/api';
 import { User, UserSettings } from '../types';
 import { useSync } from '../context/SyncContext';
-import PageHeader from '../components/PageHeader';
 import { SkeletonCard } from '../components/LoadingSkeleton';
 import { cacheService, CACHE_TTL } from '../services/cacheService';
 
@@ -86,9 +83,12 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6 pb-12">
-        <PageHeader title="Settings" description="Manage your preferences and integrations" />
-        <div className="space-y-6 max-w-4xl">
+      <div className="space-y-4 sm:space-y-6 pb-12 w-full max-w-4xl">
+        <div>
+          <h1 className="text-page-title text-slate-900 dark:text-slate-100">Settings</h1>
+          <p className="text-xs sm:text-sm text-slate-500 mt-0.5">Manage preferences and integrations</p>
+        </div>
+        <div className="space-y-4 max-w-4xl">
           <SkeletonCard />
           <SkeletonCard />
         </div>
@@ -97,83 +97,87 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-8 pb-12 max-w-4xl">
-      <PageHeader
-        title="Settings"
-        description="Manage your account preferences, Gmail OAuth integration, and automated alert thresholds."
-      />
+    <div className="space-y-4 sm:space-y-6 pb-12 w-full max-w-4xl min-w-0">
+      <div>
+        <h1 className="text-page-title text-slate-900 dark:text-slate-100">
+          Settings
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5 max-w-2xl font-normal leading-relaxed">
+          Manage your account preferences, Gmail OAuth integration, and automated alert thresholds.
+        </p>
+      </div>
 
       {savedSuccess && (
-        <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in">
-          <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400" />
-          <span>Settings saved successfully.</span>
+        <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center gap-2.5 backdrop-blur-md animate-fade-in">
+          <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />
+          <span>Preferences saved successfully.</span>
         </div>
       )}
 
       {/* Account Profile Card */}
-      <div className="card p-6 sm:p-7 space-y-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-xl shadow-md shrink-0">
+      <div className="glass-card p-4 sm:p-6 rounded-2xl sm:rounded-3xl space-y-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-md shadow-indigo-500/25 shrink-0">
             {user?.email?.charAt(0).toUpperCase() || 'U'}
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight truncate">
               {user?.email?.split('@')[0] || 'User Profile'}
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{user?.email}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium truncate">{user?.email}</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-100 dark:border-white/[0.06]">
           <div>
             <label className="label">Account Email</label>
-            <input type="text" value={user?.email || ''} disabled className="input bg-slate-50 dark:bg-slate-800/50" />
+            <input type="text" value={user?.email || ''} disabled className="input bg-white/40 dark:bg-white/[0.03] opacity-80" />
           </div>
           <div>
             <label className="label">Account Type</label>
-            <input type="text" value="Google Authenticated" disabled className="input bg-slate-50 dark:bg-slate-800/50" />
+            <input type="text" value="Google OAuth2 Authenticated" disabled className="input bg-white/40 dark:bg-white/[0.03] opacity-80" />
           </div>
         </div>
       </div>
 
       {/* Gmail Integration Card */}
-      <div className="card p-6 sm:p-7 space-y-6">
-        <div className="flex items-start justify-between gap-4">
+      <div className="glass-card p-4 sm:p-6 rounded-2xl sm:rounded-3xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
           <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <Mail size={18} className="text-indigo-600 dark:text-indigo-400" />
+            <h2 className="text-card-title flex items-center gap-2">
+              <Mail size={16} className="text-indigo-600 dark:text-indigo-400 shrink-0" />
               Gmail Integration
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Automated mailbox scanning for job applications and recruiter status shifts.
+              Automated mailbox scanning for job applications, recruiter replies, and status changes.
             </p>
           </div>
           {user?.gmail_connected ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 shrink-0">
-              <CheckCircle2 size={13} className="text-emerald-500" /> Connected
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 shrink-0 self-start sm:self-auto">
+              <CheckCircle2 size={12} className="text-emerald-500" /> Connected
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 shrink-0">
-              <XCircle size={13} className="text-rose-500" /> Disconnected
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20 shrink-0 self-start sm:self-auto">
+              <XCircle size={12} className="text-rose-500" /> Disconnected
             </span>
           )}
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-800 space-y-3">
-          <div className="flex justify-between text-xs">
-            <span className="text-slate-500 dark:text-slate-400">Last Successful Sync</span>
+        <div className="p-3.5 rounded-xl bg-white/40 dark:bg-white/[0.02] border border-slate-200/80 dark:border-white/[0.06] backdrop-blur-md space-y-2 text-xs">
+          <div className="flex flex-col sm:flex-row sm:justify-between gap-0.5">
+            <span className="text-slate-500 dark:text-slate-400 font-medium">Last Successful Sync</span>
             <span className="font-bold text-slate-900 dark:text-slate-100">
               {lastSync || user?.gmail_last_sync ? new Date(lastSync || user?.gmail_last_sync!).toLocaleString() : 'Never synced'}
             </span>
           </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-slate-500 dark:text-slate-400">OAuth Scope Permission</span>
-            <span className="font-semibold text-emerald-600 dark:text-emerald-400">https://www.googleapis.com/auth/gmail.readonly</span>
+          <div className="flex flex-col sm:flex-row sm:justify-between gap-0.5">
+            <span className="text-slate-500 dark:text-slate-400 font-medium">Scope Permission</span>
+            <span className="font-semibold text-emerald-600 dark:text-emerald-400 break-all">gmail.readonly</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button onClick={() => triggerSync(true)} className="btn btn-secondary text-xs">
+        <div>
+          <button onClick={() => triggerSync(true)} className="btn btn-secondary text-xs w-full sm:w-auto justify-center">
             <RefreshCw size={14} />
             <span>Sync Mailbox Now</span>
           </button>
@@ -181,21 +185,21 @@ export default function SettingsPage() {
       </div>
 
       {/* Application Preferences Card */}
-      <div className="card p-6 sm:p-7 space-y-6">
+      <div className="glass-card p-4 sm:p-6 rounded-2xl sm:rounded-3xl space-y-4">
         <div>
-          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Sliders size={18} className="text-indigo-600 dark:text-indigo-400" />
-            Application Inactivity Alerts
+          <h2 className="text-card-title flex items-center gap-2">
+            <Sliders size={16} className="text-indigo-600 dark:text-indigo-400 shrink-0" />
+            Inactivity Alert Threshold
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Configure when an application with no recruiter replies is flagged as stalled or ghosted.
+            Configure when an application with no recruiter activity is flagged as stale.
           </p>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div className="flex justify-between items-center">
             <label className="label mb-0">Inactivity Threshold</label>
-            <span className="text-sm font-black text-indigo-600 dark:text-indigo-400">{staleThreshold} days</span>
+            <span className="text-xs sm:text-sm font-black text-indigo-600 dark:text-indigo-400">{staleThreshold} days</span>
           </div>
           <input
             type="range"
@@ -206,18 +210,18 @@ export default function SettingsPage() {
             onChange={(e) => setStaleThreshold(Number(e.target.value))}
             className="w-full accent-indigo-600 cursor-pointer"
           />
-          <div className="flex justify-between text-[11px] text-slate-400">
+          <div className="flex justify-between text-[10px] sm:text-[11px] text-slate-400 font-medium">
             <span>7 days (Frequent)</span>
             <span>14 days (Recommended)</span>
             <span>60 days (Lenient)</span>
           </div>
         </div>
 
-        <div className="pt-2">
+        <div className="pt-1">
           <button
             onClick={handleUpdateSettings}
             disabled={saving}
-            className="btn btn-primary text-xs shadow-sm"
+            className="btn btn-primary text-xs shadow-sm w-full sm:w-auto justify-center"
           >
             {saving ? 'Saving...' : 'Save Preferences'}
           </button>
@@ -225,10 +229,10 @@ export default function SettingsPage() {
       </div>
 
       {/* Security & Danger Zone */}
-      <div className="card p-6 sm:p-7 border-rose-200/80 dark:border-rose-950/60 space-y-4">
+      <div className="glass-card p-4 sm:p-6 rounded-2xl sm:rounded-3xl border-rose-500/25 bg-rose-500/[0.03] space-y-3">
         <div>
-          <h2 className="text-base font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2">
-            <AlertTriangle size={18} />
+          <h2 className="text-card-title text-rose-700 dark:text-rose-400 flex items-center gap-2">
+            <AlertTriangle size={16} shrink-0 />
             Danger Zone
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -236,12 +240,12 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        <div className="pt-2 flex flex-wrap items-center gap-3">
+        <div className="pt-1">
           <button
             onClick={handleDisconnectGmail}
-            className="btn btn-danger text-xs"
+            className="btn btn-danger text-xs w-full sm:w-auto justify-center"
           >
-            <XCircle size={15} />
+            <XCircle size={14} />
             <span>Disconnect Gmail Integration</span>
           </button>
         </div>

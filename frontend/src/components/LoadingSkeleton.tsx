@@ -2,18 +2,18 @@ import React from 'react';
 
 export function SkeletonLine({ className = 'h-4 w-full' }: { className?: string }) {
   return (
-    <div className={`bg-slate-200 dark:bg-slate-800/80 animate-pulse rounded-lg ${className}`} />
+    <div className={`bg-slate-200/80 dark:bg-white/[0.06] animate-pulse rounded-xl ${className}`} />
   );
 }
 
 export function SkeletonCard() {
   return (
-    <div className="card p-6 space-y-4">
+    <div className="glass-card p-6 space-y-4">
       <div className="flex items-center justify-between">
-        <SkeletonLine className="w-12 h-12 rounded-xl" />
+        <SkeletonLine className="w-11 h-11 rounded-2xl" />
         <SkeletonLine className="w-16 h-5 rounded-full" />
       </div>
-      <div className="space-y-2">
+      <div className="space-y-2 pt-1">
         <SkeletonLine className="h-8 w-24" />
         <SkeletonLine className="h-4 w-32" />
       </div>
@@ -23,7 +23,7 @@ export function SkeletonCard() {
 
 export function SkeletonTableRow() {
   return (
-    <tr className="border-b border-slate-100 dark:border-slate-800 animate-pulse">
+    <tr className="border-b border-slate-100 dark:border-white/[0.05] animate-pulse">
       <td className="px-6 py-4">
         <div className="flex items-center gap-3">
           <SkeletonLine className="w-9 h-9 rounded-xl shrink-0" />
@@ -48,3 +48,4 @@ export function SkeletonTableRow() {
     </tr>
   );
 }
+

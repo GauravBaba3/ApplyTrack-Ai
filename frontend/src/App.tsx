@@ -16,6 +16,7 @@ import ApplicationDetailPage from './pages/ApplicationDetailPage';
 import EmailActivityPage from './pages/EmailActivityPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import SettingsPage from './pages/SettingsPage';
+import ProfilePage from './pages/ProfilePage';
 import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
 import NotFoundPage from './pages/NotFoundPage';
@@ -46,7 +47,7 @@ function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-[#0b0f19] flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 dark:bg-[#050811] flex items-center justify-center">
         <div className="animate-spin rounded-full h-10 w-10 border-2 border-indigo-600 border-t-transparent"></div>
       </div>
     );
@@ -101,6 +102,14 @@ function App() {
               element={
                 <RequireAuth user={user}>
                   <MainLayout><AnalyticsPage /></MainLayout>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <RequireAuth user={user}>
+                  <MainLayout><ProfilePage /></MainLayout>
                 </RequireAuth>
               }
             />

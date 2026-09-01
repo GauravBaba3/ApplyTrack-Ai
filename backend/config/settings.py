@@ -87,11 +87,20 @@ ASGI_APPLICATION = 'config.asgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+import sys
 import dj_database_url
 
-DATABASES = {
-    'default': dj_database_url.parse(os.getenv('DATABASE_URL', 'sqlite:///db.sqlite3'))
-}
+if 'test' in sys.argv or 'pytest' in sys.argv:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+else:
+    DATABASES = {
+        'default': dj_database_url.parse(os.getenv('DATABASE_URL', 'sqlite:///db.sqlite3'))
+    }
 
 
 # Password validation
@@ -129,6 +138,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 
 # Default primary key field type
@@ -173,42 +183,38 @@ CORS_ALLOW_CREDENTIALS = True
 #     if origin.strip()
 # ]
 
-CORS_ALLOWED_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174"
-    ).split(",")
-    if origin.strip()
+# CORS & CSRF Configuration
+_default_dev_origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 ]
 
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv(
-        "CSRF_TRUSTED_ORIGINS",
-        "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174"
-    ).split(",")
-    if origin.strip()
-]
+_env_cors = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+CORS_ALLOWED_ORIGINS = list(set(_env_cors + (_default_dev_origins if DEBUG else [])))
+CORS_ALLOW_CREDENTIALS = True
 
-# # CSRF and Session Cookie Settings for SPA
-# CSRF_COOKIE_HTTPONLY = False
-# CSRF_COOKIE_NAME = 'csrftoken'
-# CSRF_COOKIE_SAMESITE = 'Lax'
-# SESSION_COOKIE_SAMESITE = 'Lax'
-# CSRF_COOKIE_SECURE = False
-# SESSION_COOKIE_SECURE = False
+_env_csrf = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+CSRF_TRUSTED_ORIGINS = list(set(_env_csrf + (_default_dev_origins if DEBUG else [])))
 
-# CSRF and Session Cookie Settings for production
+# CSRF and Session Cookie Settings
 CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_NAME = 'csrftoken'
 
-CSRF_COOKIE_SAMESITE = 'None'
-SESSION_COOKIE_SAMESITE = 'None'
+IS_PRODUCTION = not DEBUG or os.getenv('DJANGO_ENV', '').lower() == 'production'
 
-CSRF_COOKIE_SECURE = True
-SESSION_COOKIE_SECURE = True
+# In development over HTTP: SameSite='Lax', Secure=False.
+# In production over HTTPS: SameSite='None', Secure=True.
+CSRF_COOKIE_SAMESITE = 'None' if IS_PRODUCTION else 'Lax'
+SESSION_COOKIE_SAMESITE = 'None' if IS_PRODUCTION else 'Lax'
 
+CSRF_COOKIE_SECURE = IS_PRODUCTION
+SESSION_COOKIE_SECURE = IS_PRODUCTION
 SESSION_COOKIE_HTTPONLY = True
 
 # Production HTTPS / proxy
@@ -248,10 +254,53 @@ LOGGING = {
 }
 
 
+# Backblaze B2 Cloud Object Storage Configuration (S3-Compatible)
+B2_KEY_ID = os.getenv('B2_KEY_ID', os.getenv('R2_ACCESS_KEY_ID', ''))
+B2_APPLICATION_KEY = os.getenv('B2_APPLICATION_KEY', os.getenv('R2_SECRET_ACCESS_KEY', ''))
+B2_BUCKET_NAME = os.getenv('B2_BUCKET_NAME', 'applytrack-ai-emails')
+B2_ENDPOINT_URL = os.getenv('B2_ENDPOINT_URL', os.getenv('R2_ENDPOINT_URL', ''))
+B2_REGION = os.getenv('B2_REGION', 'us-east-005')
+
+# Backward compatibility aliases for legacy R2 settings
+R2_ACCESS_KEY_ID = B2_KEY_ID
+R2_SECRET_ACCESS_KEY = B2_APPLICATION_KEY
+R2_BUCKET_NAME = B2_BUCKET_NAME
+R2_ENDPOINT_URL = B2_ENDPOINT_URL
+R2_ACCOUNT_ID = os.getenv('R2_ACCOUNT_ID', '')
+
+# AI Pipeline Configuration (Phase 5: Multi-Layer Intelligence Pipeline)
+HF_TOKEN = os.getenv('HF_TOKEN', os.getenv('HUGGINGFACE_API_KEY', ''))
+HUGGINGFACE_API_KEY = HF_TOKEN  # Alias for backward compatibility
+HF_MODEL_NAME = os.getenv('HF_MODEL_NAME', 'facebook/bart-large-mnli')
+
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
+GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
+
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
+OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instruct')
+
+# Configurable provider fallback order (default: groq -> gemini -> openrouter)
+AI_PROVIDER_ORDER = [p.strip().lower() for p in os.getenv('AI_PROVIDER_ORDER', 'groq,gemini,openrouter').split(',') if p.strip()]
+
+# Provider HTTP request timeouts (seconds)
+AI_PROVIDER_TIMEOUT_SECONDS = int(os.getenv('AI_PROVIDER_TIMEOUT_SECONDS', '15'))
+
 # Application settings
 APP_NAME = 'ApplyTrack AI'
 
-# Gmail Sync Configuration
+# Gmail Sync & Retention Configuration
 GMAIL_SYNC_PAGE_SIZE = int(os.getenv('GMAIL_SYNC_PAGE_SIZE', '25'))
-GMAIL_SYNC_INITIAL_DAYS = int(os.getenv('GMAIL_SYNC_INITIAL_DAYS', '30'))
+GMAIL_INITIAL_SYNC_DAYS = int(os.getenv('GMAIL_INITIAL_SYNC_DAYS', os.getenv('GMAIL_SYNC_INITIAL_DAYS', '365')))
+GMAIL_SYNC_INITIAL_DAYS = GMAIL_INITIAL_SYNC_DAYS  # Backward compatibility alias
+RAW_EMAIL_RETENTION_DAYS = int(os.getenv('RAW_EMAIL_RETENTION_DAYS', '90'))  # Default 3 months
 STALE_APPLICATION_DAYS = 14  # Default threshold for stale applications
+
+# Queue, Worker & Concurrency Configuration (Phase 3)
+QUEUE_BATCH_SIZE = int(os.getenv('QUEUE_BATCH_SIZE', '25'))  # Conservative starting batch: 25
+MAX_CONCURRENT_WORKERS = int(os.getenv('MAX_CONCURRENT_WORKERS', '1'))  # Conservative starting workers: 1
+WORKER_LOCK_TIMEOUT_SECONDS = int(os.getenv('WORKER_LOCK_TIMEOUT_SECONDS', '600'))  # 10 minutes
+MAX_JOB_RETRIES = int(os.getenv('MAX_JOB_RETRIES', '3'))  # Max retry attempts before DEAD_LETTER
+BASE_RETRY_BACKOFF_SECONDS = int(os.getenv('BASE_RETRY_BACKOFF_SECONDS', '30'))  # 30 seconds base exponential backoff

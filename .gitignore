@@ -29,26 +29,31 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
+# Virtual environments and environment variables
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
 ENV/
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# Database
-*.sqlite3
-db.sqlite3
+# Credentials and secrets
+*.pem
+*.key
+*.cert
+*.p12
+*.pkcs12
+credentials.json
+client_secret*.json
+service_account*.json
+token.json
+tokens.json
 
 # Backend
 backend/.env
+backend/.env.*
+!backend/.env.example
 backend/*.sqlite3
 
 # Frontend
@@ -56,6 +61,8 @@ frontend/node_modules/
 frontend/dist/
 frontend/build/
 frontend/.env
+frontend/.env.*
+!frontend/.env.example
 
 # Logs
 *.log

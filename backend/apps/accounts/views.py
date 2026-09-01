@@ -180,7 +180,7 @@ class GoogleCallbackView(APIView):
                     'gmail_access_token': credentials.token,
                     'gmail_refresh_token': credentials.refresh_token,
                     'gmail_token_expiry': credentials.expiry.replace(tzinfo=timezone.utc) if credentials.expiry else None,
-                    'gmail_last_sync': timezone.now()
+                    'gmail_last_sync': None
                 }
             )
 
@@ -191,7 +191,6 @@ class GoogleCallbackView(APIView):
                 user.gmail_access_token = credentials.token
                 user.gmail_refresh_token = credentials.refresh_token
                 user.gmail_token_expiry = credentials.expiry.replace(tzinfo=timezone.utc) if credentials.expiry else None
-                user.gmail_last_sync = timezone.now()
                 user.save()
 
             UserSettings.objects.get_or_create(

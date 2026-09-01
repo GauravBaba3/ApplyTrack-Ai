@@ -49,7 +49,11 @@ class ProcessedEmailSerializer(serializers.ModelSerializer):
             'sender_domain', 'subject', 'received_at', 'snippet',
             'is_job_related', 'company', 'job_title', 'detected_status',
             'event_type', 'interview_date', 'ai_confidence',
-            'processing_status', 'application_id', 'created_at', 'updated_at'
+            'processing_status', 'triage_priority', 'r2_object_key',
+            'r2_storage_status', 'r2_content_sha256', 'r2_compression_version',
+            'compressed_size_bytes', 'raw_retention_expires_at',
+            'object_storage_key', 'object_storage_status',
+            'application_id', 'created_at', 'updated_at'
         ]
         read_only_fields = fields
 
@@ -87,3 +91,18 @@ class SyncStatusResponseSerializer(serializers.Serializer):
     has_more = serializers.BooleanField()
     last_sync = serializers.DateTimeField(allow_null=True)
     stats = serializers.DictField()
+
+
+class EmailProcessingJobSerializer(serializers.ModelSerializer):
+    """Serializer for EmailProcessingJob model."""
+    class Meta:
+        from .models import EmailProcessingJob
+        model = EmailProcessingJob
+        fields = [
+            'id', 'gmail_message_id', 'thread_id', 'priority', 'status',
+            'triage_status', 'triage_score', 'triage_reason', 'triaged_at',
+            'processing_stage', 'attempt_count', 'max_attempts', 'next_attempt_at',
+            'locked_at', 'locked_by', 'completed_at', 'last_error',
+            'effective_priority_score', 'created_at', 'updated_at'
+        ]
+        read_only_fields = fields

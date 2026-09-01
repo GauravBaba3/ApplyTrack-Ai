@@ -90,7 +90,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
               const msg =
                 cumulative.emails_scanned > 0
-                  ? `${cumulative.emails_scanned} emails scanned • ${cumulative.new_applications} new applications found.`
+                  ? `${cumulative.emails_scanned} emails imported and queued for processing.`
                   : 'Mailbox is up to date.';
 
               success('Gmail sync completed', msg);

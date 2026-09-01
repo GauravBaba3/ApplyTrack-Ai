@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCw, CheckCircle2, Clock } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useSync } from '../context/SyncContext';
 
 function formatRelativeTime(dateString: string | null): string {
@@ -28,7 +28,7 @@ export default function GlobalSyncIndicator() {
   if (isSyncing) {
     return (
       <div
-        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800/80 text-indigo-900 dark:text-indigo-200 text-xs font-semibold shadow-sm animate-pulse"
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-500/10 dark:bg-indigo-500/15 border border-indigo-500/25 text-indigo-700 dark:text-indigo-300 text-xs font-semibold backdrop-blur-md animate-pulse shadow-sm"
         title="Gmail background sync in progress"
       >
         <RefreshCw size={13} className="animate-spin text-indigo-600 dark:text-indigo-400 shrink-0" />
@@ -46,14 +46,15 @@ export default function GlobalSyncIndicator() {
     <div className="flex items-center gap-2">
       <button
         onClick={() => triggerSync(true)}
-        className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+        className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-white/80 dark:hover:bg-white/[0.06] transition-all border border-transparent hover:border-slate-200/80 dark:hover:border-white/[0.08] backdrop-blur-sm"
         title="Click to manually sync Gmail"
       >
         <RefreshCw size={12} className="text-slate-400 dark:text-slate-500 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" />
-        <span className="hidden sm:inline">
+        <span className="hidden sm:inline font-medium">
           {formatRelativeTime(lastSync)}
         </span>
       </button>
     </div>
   );
 }
+

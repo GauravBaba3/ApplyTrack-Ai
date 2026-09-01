@@ -4,6 +4,8 @@ import axios from 'axios';
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   withCredentials: true,
+  xsrfCookieName: 'csrftoken',
+  xsrfHeaderName: 'X-CSRFToken',
 });
 
 let cachedCsrfToken: string | null = null;
@@ -61,11 +63,29 @@ api.interceptors.response.use(
     }
     return response;
   },
-  (error) => {
+  async (error) => {
     // Handle specific error cases
     if (error.response) {
       const { status, data } = error.response;
+      const originalRequest = error.config;
       
+      // Auto-retry once on 403 CSRF failure by refreshing CSRF token
+      if (
+        status === 403 &&
+        typeof data?.detail === 'string' &&
+        data.detail.toLowerCase().includes('csrf') &&
+        originalRequest &&
+        !originalRequest._csrfRetried
+      ) {
+        originalRequest._csrfRetried = true;
+        cachedCsrfToken = null;
+        const newToken = await fetchCsrfToken();
+        if (newToken) {
+          originalRequest.headers['X-CSRFToken'] = newToken;
+          return api(originalRequest);
+        }
+      }
+
       // Only redirect to login on 401 for protected resource calls, not for the
       // initial auth check (/auth/me/) which is expected to fail when logged out
       if (status === 401) {
@@ -77,7 +97,7 @@ api.interceptors.response.use(
         }
       }
       
-      return Promise.reject({ ...error, message: data?.error || error.message });
+      return Promise.reject({ ...error, message: data?.error || data?.detail || error.message });
     }
     
     // Handle network errors

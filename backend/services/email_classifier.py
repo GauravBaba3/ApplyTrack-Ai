@@ -183,3 +183,68 @@ class EmailClassifier:
                 count += 1
         
         return count
+
+    @classmethod
+    def extract_entities(cls, email_data):
+        """
+        Extract company and job title heuristics from email subject, sender, and snippet.
+        """
+        subject = email_data.get('subject', '')
+        sender = email_data.get('sender', '')
+        sender_domain = cls._extract_domain(sender)
+        
+        company = ''
+        job_title = ''
+        
+        # 1. Company heuristic: domain name (if not generic platform)
+        if sender_domain and sender_domain not in cls.RECRUITER_DOMAINS and '.' in sender_domain:
+            parts = sender_domain.split('.')
+            if len(parts) >= 2 and parts[0] not in ['mail', 'email', 'notifications', 'careers', 'jobs', 'recruiting']:
+                company = parts[0].capitalize()
+            elif len(parts) >= 3 and parts[0] in ['careers', 'jobs', 'recruiting']:
+                company = parts[1].capitalize()
+
+        # 2. Company / Title heuristic from common subject patterns
+        # e.g., "Interview with Stripe: Software Engineer" or "Application Received: Senior Dev at Google"
+        match_at = re.search(r'(?:for|at|with)\s+([A-Z][A-Za-z0-9\s&]+?)(?:\s+for|\s+at|\s+with|\s*[-–—:|]|\s*$)', subject)
+        if match_at and not company:
+            candidate_co = match_at.group(1).strip()
+            if len(candidate_co) > 1 and len(candidate_co) < 40:
+                company = candidate_co
+
+        match_role = re.search(r'(?:role|position|job):\s*([A-Za-z0-9\s\-/]+)', subject, re.IGNORECASE)
+        if match_role:
+            job_title = match_role.group(1).strip()
+
+        return company, job_title
+
+    @classmethod
+    def extract_status(cls, email_data):
+        """Extract application status heuristic from subject and snippet."""
+        text = f"{email_data.get('subject', '')} {email_data.get('snippet', '')}".lower()
+        if any(w in text for w in ['offer', 'congratulations']):
+            return 'Offer'
+        elif any(w in text for w in ['interview', 'schedule', 'technical round', 'phone screen']):
+            return 'Interview'
+        elif any(w in text for w in ['assessment', 'test', 'coding challenge', 'hackerrank']):
+            return 'Assessment'
+        elif any(w in text for w in ['unfortunately', 'not selected', 'regret to inform', 'position filled']):
+            return 'Rejected'
+        return 'Applied'
+
+    @classmethod
+    def extract_event_type(cls, email_data):
+        """Extract event type heuristic from subject and snippet."""
+        text = f"{email_data.get('subject', '')} {email_data.get('snippet', '')}".lower()
+        if any(w in text for w in ['interview', 'invitation to interview', 'schedule']):
+            return 'interview_invitation'
+        elif any(w in text for w in ['offer', 'congratulations']):
+            return 'offer'
+        elif any(w in text for w in ['assessment', 'coding test', 'hackerrank']):
+            return 'coding_assessment'
+        elif any(w in text for w in ['unfortunately', 'regret', 'not selected']):
+            return 'rejection'
+        elif any(w in text for w in ['application received', 'thank you for applying']):
+            return 'application_received'
+        return 'other'
+

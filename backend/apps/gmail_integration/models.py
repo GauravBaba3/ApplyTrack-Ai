@@ -36,13 +36,48 @@ class ProcessingStatus(models.TextChoices):
     FAILED = 'failed', 'Failed'
 
 
+class TriagePriority(models.TextChoices):
+    """Priority queues for asynchronous email processing."""
+    P1 = 'P1', 'P1 - High (Interview/Offer/Decision/Rejection)'
+    P2 = 'P2', 'P2 - Medium (Assessment/Application/Status/Recruiter)'
+    P3 = 'P3', 'P3 - Low (Alerts/Newsletters/Deferred)'
+
+
+class R2StorageStatus(models.TextChoices):
+    """Status of raw compressed email in Cloudflare R2."""
+    PENDING = 'pending', 'Pending'
+    UPLOADED = 'uploaded', 'Uploaded'
+    FAILED = 'failed', 'Failed'
+    PRUNED = 'pruned', 'Pruned (Retention Expired)'
+
+
 class ProcessedEmail(models.Model):
-    """Model for storing processed job-related emails."""
+    """Model for storing processed job-related emails and R2 storage references."""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='processed_emails')
     
     # Gmail identifiers
     gmail_message_id = models.CharField(max_length=255, unique=True)
     thread_id = models.CharField(max_length=255)
+    
+    # Cloudflare R2 Object Storage Reference & Compression metadata
+    r2_object_key = models.CharField(max_length=512, blank=True, null=True, db_index=True)
+    r2_storage_status = models.CharField(
+        max_length=20,
+        choices=R2StorageStatus.choices,
+        default=R2StorageStatus.PENDING,
+        db_index=True
+    )
+    r2_content_sha256 = models.CharField(max_length=64, blank=True, null=True)
+    r2_compression_version = models.CharField(max_length=20, default='gzip-v1')
+    compressed_size_bytes = models.IntegerField(default=0)
+    raw_retention_expires_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    
+    triage_priority = models.CharField(
+        max_length=10,
+        choices=TriagePriority.choices,
+        default=TriagePriority.P2,
+        db_index=True
+    )
     
     # Email metadata
     sender = models.EmailField()
@@ -87,6 +122,33 @@ class ProcessedEmail(models.Model):
     
     def __str__(self):
         return f"{self.subject} from {self.sender}"
+
+    @property
+    def object_storage_key(self) -> str:
+        """Provider-neutral alias for cloud object storage reference key."""
+        return self.r2_object_key or ''
+
+    @object_storage_key.setter
+    def object_storage_key(self, value: str):
+        self.r2_object_key = value
+
+    @property
+    def b2_object_key(self) -> str:
+        """Backblaze B2 specific alias for cloud object storage reference key."""
+        return self.r2_object_key or ''
+
+    @b2_object_key.setter
+    def b2_object_key(self, value: str):
+        self.r2_object_key = value
+
+    @property
+    def object_storage_status(self) -> str:
+        """Provider-neutral alias for cloud object storage status."""
+        return self.r2_storage_status
+
+    @object_storage_status.setter
+    def object_storage_status(self, value: str):
+        self.r2_storage_status = value
     
     class Meta:
         ordering = ['-received_at']
@@ -122,3 +184,127 @@ class SyncLog(models.Model):
     
     class Meta:
         ordering = ['-started_at']
+
+
+class JobStatus(models.TextChoices):
+    """Durable queue processing job states."""
+    PENDING = 'PENDING', 'Pending'
+    PROCESSING = 'PROCESSING', 'Processing'
+    COMPLETED = 'COMPLETED', 'Completed'
+    RETRY = 'RETRY', 'Retry'
+    FAILED = 'FAILED', 'Failed'
+    NEEDS_REVIEW = 'NEEDS_REVIEW', 'Needs Review'
+    DEAD_LETTER = 'DEAD_LETTER', 'Dead Letter'
+
+
+class TriageStatusChoice(models.TextChoices):
+    """High-recall initial triage classification categories."""
+    JOB_LIKELY = 'job_likely', 'Job Likely'
+    UNCERTAIN = 'uncertain', 'Uncertain'
+    LOW_PRIORITY = 'low_priority', 'Low Priority'
+
+
+class EmailProcessingJob(models.Model):
+    """
+    Durable queue job record for asynchronous, priority-scheduled email processing.
+    Stored in Neon PostgreSQL (not in-memory).
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='processing_jobs')
+    email = models.OneToOneField(
+        ProcessedEmail,
+        on_delete=models.CASCADE,
+        related_name='processing_job'
+    )
+    
+    # Identifiers for quick lookup
+    gmail_message_id = models.CharField(max_length=255, db_index=True)
+    thread_id = models.CharField(max_length=255, db_index=True)
+    
+    # Queue Priority & Status
+    priority = models.CharField(
+        max_length=10,
+        choices=TriagePriority.choices,
+        default=TriagePriority.P2,
+        db_index=True
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=JobStatus.choices,
+        default=JobStatus.PENDING,
+        db_index=True
+    )
+    
+    # Triage metadata
+    triage_status = models.CharField(
+        max_length=20,
+        choices=TriageStatusChoice.choices,
+        default=TriageStatusChoice.UNCERTAIN,
+        db_index=True
+    )
+    triage_score = models.FloatField(default=0.0)
+    triage_reason = models.TextField(blank=True, null=True)
+    triaged_at = models.DateTimeField(auto_now_add=True)
+    
+    # Processing stage tracking
+    processing_stage = models.CharField(max_length=50, default='triage')
+    
+    # Retry & scheduling
+    attempt_count = models.IntegerField(default=0)
+    max_attempts = models.IntegerField(default=3)
+    next_attempt_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    
+    # Locking & concurrency (crash-safe)
+    locked_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    locked_by = models.CharField(max_length=255, blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    
+    # Error tracking
+    last_error = models.TextField(blank=True, null=True)
+    
+    # Effective priority for aging / fair scheduling
+    effective_priority_score = models.FloatField(default=0.0, db_index=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"Job {self.id} [{self.priority} - {self.status}] for msg {self.gmail_message_id}"
+    
+    class Meta:
+        ordering = ['-priority', 'next_attempt_at']
+        indexes = [
+            models.Index(fields=['priority', 'status', 'next_attempt_at']),
+            models.Index(fields=['thread_id', 'priority']),
+            models.Index(fields=['status', 'locked_at']),
+        ]
+
+
+class ProviderUsageLog(models.Model):
+    """
+    Model for tracking AI provider & API usage metrics in Neon PostgreSQL.
+    Tracks token counts, latencies, success rates, and status codes without storing secrets.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='provider_usage_logs', null=True, blank=True)
+    provider = models.CharField(max_length=50, db_index=True)  # 'gmail', 'huggingface', 'groq', 'gemini', 'openrouter'
+    model_name = models.CharField(max_length=100, blank=True, null=True)
+    endpoint = models.CharField(max_length=255, blank=True, null=True)
+    request_tokens = models.IntegerField(default=0)
+    response_tokens = models.IntegerField(default=0)
+    total_tokens = models.IntegerField(default=0)
+    latency_ms = models.IntegerField(default=0)
+    status_code = models.IntegerField(default=200)
+    success = models.BooleanField(default=True, db_index=True)
+    error_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['provider', 'created_at']),
+            models.Index(fields=['provider', 'success']),
+        ]
+
+    def __str__(self):
+        return f"{self.provider} [{self.status_code}] ({self.latency_ms}ms) at {self.created_at}"
+
+

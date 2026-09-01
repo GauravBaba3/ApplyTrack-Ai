@@ -23,14 +23,16 @@ class ApplicationSource(models.TextChoices):
 class ApplicationStatus(models.TextChoices):
     """Status choices for job applications."""
     APPLIED = 'Applied', 'Applied'
+    UNDER_REVIEW = 'Under Review', 'Under Review'
     ASSESSMENT = 'Assessment', 'Assessment'
     INTERVIEW = 'Interview', 'Interview'
     OFFER = 'Offer', 'Offer'
     REJECTED = 'Rejected', 'Rejected'
     WITHDRAWN = 'Withdrawn', 'Withdrawn'
-    PENDING = 'Pending', 'Pending'
     NO_RESPONSE = 'No Response', 'No Response'
+    STALE = 'Stale', 'Stale'
     GHOSTED = 'Ghosted', 'Ghosted'
+    NEEDS_REVIEW = 'Needs Review', 'Needs Review'
     UNKNOWN = 'Unknown', 'Unknown'
 
 
@@ -63,8 +65,11 @@ class Application(models.Model):
     last_activity_date = models.DateTimeField(blank=True, null=True)
     confidence = models.FloatField(default=1.0)  # Confidence in AI detection
     
-    # User notes
+    # User notes & review details
     notes = models.TextField(blank=True, null=True)
+    review_reason = models.TextField(blank=True, null=True)
+    recruiter_name = models.CharField(max_length=255, blank=True, null=True)
+    recruiter_email = models.CharField(max_length=255, blank=True, null=True)
     
     # Metadata
     is_ai_detected = models.BooleanField(default=False)
@@ -84,6 +89,7 @@ class Application(models.Model):
             models.Index(fields=['user', 'company']),
             models.Index(fields=['user', 'current_status']),
             models.Index(fields=['user', 'application_date']),
+            models.Index(fields=['user', 'needs_review']),
         ]
 
 
@@ -104,8 +110,10 @@ class StatusHistory(models.Model):
         max_length=50,
         choices=ApplicationStatus.choices
     )
-    source = models.CharField(max_length=50, default='ai')  # ai, manual, email
+    source = models.CharField(max_length=50, default='ai')  # ai, manual, rule_engine, email
     timestamp = models.DateTimeField(auto_now_add=True)
+    confidence = models.FloatField(default=1.0)
+    evidence = models.TextField(blank=True, null=True)
     # Store related email ID instead of ForeignKey to avoid circular dependency
     related_email_id = models.IntegerField(blank=True, null=True, db_index=True)
     
@@ -126,6 +134,8 @@ class FollowUp(models.Model):
     )
     draft_subject = models.CharField(max_length=500)
     draft_body = models.TextField()
+    suggested_send_date = models.DateField(blank=True, null=True)
+    days_stale = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     is_sent = models.BooleanField(default=False)
     

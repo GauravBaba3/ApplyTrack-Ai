@@ -85,17 +85,8 @@ class GmailService:
             else:
                 date_filter = (timezone.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
             
-            # Properly quoted job-related keywords for Gmail Search API
-            keywords = [
-                'application', 'apply', 'applied', 'interview', 'assessment', 'candidate',
-                'recruiter', 'position', 'job', 'hiring', '"application status"',
-                'offer', 'unfortunately', '"next steps"', 'schedule',
-                '"thank you for applying"', '"we are pleased"', 'invitation',
-                'selected', '"not selected"', '"position filled"'
-            ]
-            
-            keyword_query = ' OR '.join(keywords)
-            query = f'after:{date_filter} ({keyword_query})'
+            # Broad, high-recall date filter (no premature keyword restriction)
+            query = f'after:{date_filter}'
             
             list_kwargs = {
                 'userId': 'me',
@@ -108,17 +99,6 @@ class GmailService:
             results = self.service.users().messages().list(**list_kwargs).execute()
             messages = results.get('messages', [])
             next_page_token = results.get('nextPageToken')
-            
-            # Fallback to date query only if initial search without page_token yields 0
-            if not messages and not page_token and not after_timestamp:
-                logger.info(f"Keyword search returned 0 messages, querying after:{date_filter}")
-                fallback_results = self.service.users().messages().list(
-                    userId='me',
-                    q=f'after:{date_filter}',
-                    maxResults=max_results
-                ).execute()
-                messages = fallback_results.get('messages', [])
-                next_page_token = fallback_results.get('nextPageToken')
             
             # If no messages found, terminate pagination
             if not messages:

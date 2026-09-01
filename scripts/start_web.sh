@@ -42,5 +42,6 @@ exec gunicorn config.wsgi:application \
   --workers "${WORKERS}" \
   --threads "${THREADS}" \
   --timeout "${TIMEOUT}" \
+  --forwarded-allow-ips='*' \
   --access-logfile - \
   --error-logfile -

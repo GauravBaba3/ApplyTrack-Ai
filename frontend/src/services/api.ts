@@ -86,9 +86,10 @@ api.interceptors.response.use(
         }
       }
 
-      // Only redirect to login on 401 for protected resource calls, not for the
+      // Only redirect to login on 401 or DRF 403 (unauthenticated) for protected resource calls, not for the
       // initial auth check (/auth/me/) which is expected to fail when logged out
-      if (status === 401) {
+      const isUnauthenticated = status === 401 || (status === 403 && (data?.detail === 'Authentication credentials were not provided.' || data?.detail === 'Not authenticated.'));
+      if (isUnauthenticated) {
         const url = error.config?.url || '';
         const isAuthCheck = url.includes('/auth/me/');
         const isOnLoginPage = window.location.pathname === '/login' || window.location.pathname === '/';

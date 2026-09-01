@@ -17,16 +17,15 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-default-key-for-dev
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
-# ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
-
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.getenv(
-        "ALLOWED_HOSTS",
-        "localhost,127.0.0.1"
-    ).split(",")
-    if host.strip()
+_default_hosts = [
+    "localhost",
+    "127.0.0.1",
+    "applytrackai.in",
+    "www.applytrackai.in",
+    ".onrender.com",
 ]
+_env_hosts = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if h.strip()]
+ALLOWED_HOSTS = list(set(_env_hosts + _default_hosts))
 
 
 # Application definition
@@ -195,12 +194,20 @@ _default_dev_origins = [
     "http://127.0.0.1:8000",
 ]
 
-_env_cors = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
-CORS_ALLOWED_ORIGINS = list(set(_env_cors + (_default_dev_origins if DEBUG else [])))
+_default_prod_origins = [
+    "https://applytrackai.in",
+    "https://www.applytrackai.in",
+]
+
+_frontend_url = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+_extra_origins = [_frontend_url] if _frontend_url else []
+
+_env_cors = [o.strip().rstrip("/") for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+CORS_ALLOWED_ORIGINS = list(set(_env_cors + _default_prod_origins + _extra_origins + (_default_dev_origins if DEBUG else [])))
 CORS_ALLOW_CREDENTIALS = True
 
-_env_csrf = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
-CSRF_TRUSTED_ORIGINS = list(set(_env_csrf + (_default_dev_origins if DEBUG else [])))
+_env_csrf = [o.strip().rstrip("/") for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+CSRF_TRUSTED_ORIGINS = list(set(_env_csrf + _default_prod_origins + _extra_origins + (_default_dev_origins if DEBUG else [])))
 
 # CSRF and Session Cookie Settings
 CSRF_COOKIE_HTTPONLY = False

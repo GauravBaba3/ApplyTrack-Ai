@@ -115,9 +115,11 @@ class GoogleCallbackView(APIView):
             code = request.GET.get('code')
             raw_state = request.GET.get('state', '')
 
+            default_frontend = 'https://applytrackai.in' if getattr(settings, 'IS_PRODUCTION', False) else 'http://localhost:5174'
+            frontend_url = os.getenv('FRONTEND_URL', default_frontend).rstrip('/')
+
             if not code:
                 logger.error("OAuth callback missing authorization code")
-                frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5174')
                 return redirect(f"{frontend_url}/login?auth=failed&error=missing_code")
 
             # Try to decode our encoded state payload
@@ -135,7 +137,6 @@ class GoogleCallbackView(APIView):
 
             if not nonce:
                 logger.error("OAuth callback: no valid state found")
-                frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5174')
                 return redirect(f"{frontend_url}/login?auth=failed&error=invalid_state")
 
             # Create a new flow; inject the PKCE verifier we recovered
@@ -202,21 +203,23 @@ class GoogleCallbackView(APIView):
             from django.middleware.csrf import get_token
             csrf_token = get_token(request)
 
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5174')
+            default_frontend = 'https://applytrackai.in' if getattr(settings, 'IS_PRODUCTION', False) else 'http://localhost:5174'
+            frontend_url = os.getenv('FRONTEND_URL', default_frontend).rstrip('/')
             response = redirect(f"{frontend_url}/dashboard?auth=success")
             response.set_cookie(
                 key='csrftoken',
                 value=csrf_token,
-                samesite='Lax',
-                secure=settings.SESSION_COOKIE_SECURE,
+                samesite=getattr(settings, 'CSRF_COOKIE_SAMESITE', 'Lax'),
+                secure=getattr(settings, 'CSRF_COOKIE_SECURE', False),
                 httponly=False,
-                domain=None
+                domain=getattr(settings, 'CSRF_COOKIE_DOMAIN', None)
             )
             return response
 
         except Exception as e:
             logger.error(f"Google OAuth callback failed: {str(e)}", exc_info=True)
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5174')
+            default_frontend = 'https://applytrackai.in' if getattr(settings, 'IS_PRODUCTION', False) else 'http://localhost:5174'
+            frontend_url = os.getenv('FRONTEND_URL', default_frontend).rstrip('/')
             return redirect(f"{frontend_url}/login?auth=failed&error=oauth_failed")
 
 

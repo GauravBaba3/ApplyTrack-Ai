@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { gmailApi, authApi } from '../services/api';
-import { SyncStatus, User } from '../types';
+import { SyncStatus, User, CurrentSyncMetrics, GlobalMailboxTotals } from '../types';
 import { useToast } from './ToastContext';
 import { cacheService } from '../services/cacheService';
 
@@ -28,6 +28,8 @@ const AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000; // Trigger a new sync every 10 min
 // Progress shape exposed through context
 export interface SyncProgress {
   status: string;
+  sync?: CurrentSyncMetrics;
+  global?: GlobalMailboxTotals;
   emails_fetched: number;
   emails_stored: number;
   emails_queued: number;
@@ -121,20 +123,25 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       const isRunning = backendStatus === 'running';
       const queueActive = data?.queue?.is_active === true;
 
+      const syncMetrics = data?.sync;
+      const globalTotals = data?.global;
+
       // Build progress from the richer status fields
       const prog: SyncProgress = {
         status: backendStatus,
-        emails_fetched: (data as any).emails_fetched ?? data?.stats?.emails_scanned ?? 0,
-        emails_stored: (data as any).emails_stored ?? 0,
-        emails_queued: (data as any).emails_queued ?? 0,
-        emails_processing: (data as any).emails_processing ?? (data?.queue?.processing ?? 0),
-        emails_processed: (data as any).emails_processed ?? (data?.queue?.completed ?? 0),
-        emails_pending: (data as any).emails_pending ?? (data?.queue?.pending ?? 0),
-        job_related: (data as any).job_related ?? data?.stats?.job_related_emails ?? 0,
-        applications_updated: (data as any).applications_updated ?? data?.stats?.applications_updated ?? 0,
-        new_applications: (data as any).new_applications ?? data?.stats?.new_applications ?? 0,
-        page: data?.page ?? 0,
-        has_more: data?.has_more ?? false,
+        sync: syncMetrics,
+        global: globalTotals,
+        emails_fetched: syncMetrics?.fetched ?? (data as any).emails_fetched ?? data?.stats?.emails_scanned ?? 0,
+        emails_stored: syncMetrics?.stored ?? (data as any).emails_stored ?? 0,
+        emails_queued: syncMetrics?.queued ?? (data as any).emails_queued ?? 0,
+        emails_processing: syncMetrics?.processing ?? (data as any).emails_processing ?? (data?.queue?.processing ?? 0),
+        emails_processed: syncMetrics?.processed ?? (data as any).emails_processed ?? (data?.queue?.completed ?? 0),
+        emails_pending: syncMetrics?.pending ?? (data as any).emails_pending ?? (data?.queue?.pending ?? 0),
+        job_related: syncMetrics?.job_related ?? (data as any).job_related ?? data?.stats?.job_related_emails ?? 0,
+        applications_updated: syncMetrics?.applications_updated ?? (data as any).applications_updated ?? data?.stats?.applications_updated ?? 0,
+        new_applications: syncMetrics?.new_applications ?? (data as any).new_applications ?? data?.stats?.new_applications ?? 0,
+        page: syncMetrics?.page ?? data?.page ?? 0,
+        has_more: syncMetrics?.has_more ?? data?.has_more ?? false,
         queue: data?.queue ?? {
           pending: 0, processing: 0, completed: 0, failed: 0,
           is_active: false, total_applications: 0,

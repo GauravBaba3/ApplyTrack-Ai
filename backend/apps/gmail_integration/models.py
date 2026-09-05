@@ -264,6 +264,16 @@ class EmailProcessingJob(models.Model):
     # Effective priority for aging / fair scheduling
     effective_priority_score = models.FloatField(default=0.0, db_index=True)
     
+    # Optional link to active GmailSyncJob session
+    sync_job = models.ForeignKey(
+        'GmailSyncJob',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='email_jobs',
+        db_index=True
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -276,6 +286,7 @@ class EmailProcessingJob(models.Model):
             models.Index(fields=['priority', 'status', 'next_attempt_at']),
             models.Index(fields=['thread_id', 'priority']),
             models.Index(fields=['status', 'locked_at']),
+            models.Index(fields=['sync_job', 'status']),
         ]
 
 

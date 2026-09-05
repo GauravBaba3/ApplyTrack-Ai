@@ -93,7 +93,9 @@ class SyncStatusResponseSerializer(serializers.Serializer):
     started_at = serializers.DateTimeField(allow_null=True, required=False)
     stats = serializers.DictField()
     queue = serializers.DictField(required=False, default=dict)
-    # Granular pipeline counters (authoritative from DB)
+    # Dedicated current sync session scope
+    sync = serializers.DictField(required=False, default=dict)
+    # Granular pipeline counters (strictly scoped to current sync)
     emails_fetched = serializers.IntegerField(default=0)
     emails_stored = serializers.IntegerField(default=0)
     emails_queued = serializers.IntegerField(default=0)
@@ -103,6 +105,12 @@ class SyncStatusResponseSerializer(serializers.Serializer):
     job_related = serializers.IntegerField(default=0)
     applications_updated = serializers.IntegerField(default=0)
     new_applications = serializers.IntegerField(default=0)
+    total_applications = serializers.IntegerField(default=0)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Add 'global' dict field dynamically because global is a Python reserved keyword
+        self.fields['global'] = serializers.DictField(required=False, default=dict)
 
 
 

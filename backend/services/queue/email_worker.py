@@ -14,6 +14,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import F
 
 from apps.gmail_integration.models import (
     EmailProcessingJob,
@@ -21,7 +22,8 @@ from apps.gmail_integration.models import (
     ProcessingStatus,
     EmailEventType,
     JobStatus,
-    TriagePriority
+    TriagePriority,
+    GmailSyncJob,
 )
 from apps.applications.models import Application, StatusHistory, ApplicationStatus
 from services.canonical_email import CanonicalEmail
@@ -178,6 +180,11 @@ class EmailWorker:
                 if is_new and match_score >= 0.40:
                     created_app = ApplicationMatcher.create_application_from_email(app_match_payload, user)
                     email.application_id = created_app.id
+                    if job.sync_job_id:
+                        GmailSyncJob.objects.filter(id=job.sync_job_id).update(
+                            applications_updated=F('applications_updated') + 1,
+                            new_applications=F('new_applications') + 1
+                        )
                 elif app:
                     old_status = app.current_status
                     email.application_id = app.id
@@ -203,12 +210,21 @@ class EmailWorker:
                         else:
                             app.last_activity_date = timezone.now()
                             app.save(update_fields=['last_activity_date'])
+
+                        if job.sync_job_id:
+                            GmailSyncJob.objects.filter(id=job.sync_job_id).update(
+                                applications_updated=F('applications_updated') + 1
+                            )
                     else:
                         # Ambiguous match or low confidence -> Flag for human review
                         email.processing_status = ProcessingStatus.NEEDS_REVIEW
                         app.needs_review = True
                         app.review_reason = f"Ambiguous match (score {match_score:.2f}) or low confidence ({confidence:.2f})"
                         app.save(update_fields=['needs_review', 'review_reason'])
+                        if job.sync_job_id:
+                            GmailSyncJob.objects.filter(id=job.sync_job_id).update(
+                                needs_review=F('needs_review') + 1
+                            )
 
                 email.save()
 

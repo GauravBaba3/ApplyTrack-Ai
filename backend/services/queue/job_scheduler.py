@@ -47,7 +47,8 @@ class JobScheduler:
         cls,
         email: ProcessedEmail,
         user,
-        email_data: Optional[Dict[str, Any]] = None
+        email_data: Optional[Dict[str, Any]] = None,
+        sync_job: Optional[Any] = None,
     ) -> EmailProcessingJob:
         """
         Create or get durable processing job for an ingested email with high-recall triage.
@@ -84,8 +85,12 @@ class JobScheduler:
                 'triage_reason': triage_reason,
                 'processing_stage': 'triage',
                 'effective_priority_score': triage_score,
+                'sync_job': sync_job,
             }
         )
+        if not created and sync_job and job.sync_job_id != sync_job.id:
+            job.sync_job = sync_job
+            job.save(update_fields=['sync_job'])
         return job
 
     @classmethod

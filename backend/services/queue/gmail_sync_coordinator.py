@@ -316,7 +316,7 @@ class GmailSyncCoordinator:
                         try:
                             full_msg = gmail_service.fetch_and_parse_message(msg_id)
                             if full_msg:
-                                SyncService._process_message(full_msg, user, page_batch_result)
+                                SyncService._process_message(full_msg, user, page_batch_result, sync_job=job)
                                 page_emails_stored += 1
                         except Exception as e:
                             # A single email failure must NOT crash the page pipeline

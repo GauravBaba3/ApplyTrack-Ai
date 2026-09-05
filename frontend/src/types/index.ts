@@ -126,12 +126,54 @@ export interface SyncSummary {
   };
 }
 
+export interface CurrentSyncMetrics {
+  status: string;
+  job_id?: number | null;
+  fetched: number;
+  stored: number;
+  queued: number;
+  processing: number;
+  processed: number;
+  pending: number;
+  failed?: number;
+  job_related: number;
+  applications_updated: number;
+  new_applications: number;
+  page?: number;
+  has_more?: boolean;
+}
+
+export interface GlobalMailboxTotals {
+  stored: number;
+  processed: number;
+  queued: number;
+  processing: number;
+  pending: number;
+  failed?: number;
+  job_related: number;
+  applications: number;
+}
+
 export interface SyncStatus {
   status: 'idle' | 'running' | 'completed' | 'failed';
   page: number;
   has_more: boolean;
   last_sync: string | null;
   started_at?: string | null;
+  sync?: CurrentSyncMetrics;
+  global?: GlobalMailboxTotals;
+  // Granular pipeline counters (strictly scoped to current sync)
+  emails_fetched?: number;
+  emails_stored?: number;
+  emails_queued?: number;
+  emails_processing?: number;
+  emails_processed?: number;
+  emails_pending?: number;
+  emails_failed?: number;
+  job_related?: number;
+  applications_updated?: number;
+  new_applications?: number;
+  total_applications?: number;
   stats: {
     emails_scanned: number;
     job_related_emails: number;
@@ -140,16 +182,6 @@ export interface SyncStatus {
     needs_review: number;
     pages_processed: number;
   };
-  // Granular pipeline counters (authoritative from DB)
-  emails_fetched?: number;
-  emails_stored?: number;
-  emails_queued?: number;
-  emails_processing?: number;
-  emails_processed?: number;
-  emails_pending?: number;
-  job_related?: number;
-  applications_updated?: number;
-  new_applications?: number;
   queue?: {
     pending: number;
     processing: number;

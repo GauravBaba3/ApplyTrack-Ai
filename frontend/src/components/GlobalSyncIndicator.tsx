@@ -20,8 +20,9 @@ function formatRelativeTime(dateString: string | null): string {
 export default function GlobalSyncIndicator() {
   const { isSyncing, progress, lastSync, triggerSync } = useSync();
 
-  const fetched = progress?.emails_fetched ?? 0;
-  const processed = progress?.emails_processed ?? 0;
+  const fetched = progress?.sync?.fetched ?? progress?.emails_fetched ?? 0;
+  const processed = progress?.sync?.processed ?? progress?.emails_processed ?? 0;
+  const jobRelated = progress?.sync?.job_related ?? progress?.job_related ?? 0;
 
   if (isSyncing) {
     return (
@@ -33,6 +34,7 @@ export default function GlobalSyncIndicator() {
         <span className="hidden sm:inline">
           Syncing{fetched > 0 ? ` • ${fetched} fetched` : ''}
           {processed > 0 ? ` • ${processed} processed` : ''}
+          {jobRelated > 0 ? ` • ${jobRelated} jobs found` : ''}
         </span>
         <span className="sm:hidden">Syncing...</span>
       </div>

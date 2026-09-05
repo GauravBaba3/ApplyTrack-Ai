@@ -66,15 +66,20 @@ export default function DashboardPage() {
     triggerSync(true);
   };
 
-  const syncProgress = progress ? {
-    emails_fetched: progress.emails_fetched ?? 0,
-    emails_stored: progress.emails_stored ?? 0,
-    emails_queued: progress.emails_queued ?? 0,
-    emails_processing: progress.emails_processing ?? 0,
-    emails_processed: progress.emails_processed ?? 0,
-    job_related: progress.job_related ?? 0,
-    applications_updated: progress.applications_updated ?? 0,
-    new_applications: progress.new_applications ?? 0,
+  const syncMetrics = progress ? {
+    fetched: progress.sync?.fetched ?? progress.emails_fetched ?? 0,
+    stored: progress.sync?.stored ?? progress.emails_stored ?? 0,
+    queued: progress.sync?.queued ?? progress.emails_queued ?? 0,
+    processing: progress.sync?.processing ?? progress.emails_processing ?? 0,
+    processed: progress.sync?.processed ?? progress.emails_processed ?? 0,
+    job_related: progress.sync?.job_related ?? progress.job_related ?? 0,
+    applications_updated: progress.sync?.applications_updated ?? progress.applications_updated ?? 0,
+  } : null;
+
+  const globalTotals = progress?.global ? {
+    stored: progress.global.stored,
+    processed: progress.global.processed,
+    applications: progress.global.applications,
   } : null;
 
   const totalApps = stats?.total_applications || 0;
@@ -140,40 +145,66 @@ export default function DashboardPage() {
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300 truncate">
-                  Gmail Sync Running
+                  Active Gmail Sync Session
                 </p>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                  Fetching, storing and processing emails concurrently in the background
+                  Scoped to current sync execution • Ingesting and processing concurrently
                 </p>
               </div>
             </div>
+            {syncMetrics && (
+              <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20">
+                Current Sync
+              </span>
+            )}
           </div>
-          {syncProgress && (
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 pt-2 border-t border-indigo-500/15 text-center">
-              <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">Fetched</p>
-                <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{syncProgress.emails_fetched}</p>
+
+          {syncMetrics && (
+            <div className="space-y-2.5 pt-2 border-t border-indigo-500/15">
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1.5 text-center">
+                <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
+                  <p className="text-[10px] text-slate-500 uppercase font-semibold">Fetched</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{syncMetrics.fetched}</p>
+                </div>
+                <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
+                  <p className="text-[10px] text-slate-500 uppercase font-semibold">Stored</p>
+                  <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{syncMetrics.stored}</p>
+                </div>
+                <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
+                  <p className="text-[10px] text-slate-500 uppercase font-semibold">Queued</p>
+                  <p className="text-sm font-bold text-violet-600 dark:text-violet-400">{syncMetrics.queued}</p>
+                </div>
+                <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
+                  <p className="text-[10px] text-slate-500 uppercase font-semibold">Processing</p>
+                  <p className="text-sm font-bold text-amber-600 dark:text-amber-400">{syncMetrics.processing}</p>
+                </div>
+                <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
+                  <p className="text-[10px] text-slate-500 uppercase font-semibold">Processed</p>
+                  <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{syncMetrics.processed}</p>
+                </div>
+                <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
+                  <p className="text-[10px] text-slate-500 uppercase font-semibold">Job Related</p>
+                  <p className="text-sm font-bold text-indigo-600 dark:text-indigo-400">{syncMetrics.job_related}</p>
+                </div>
+                <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
+                  <p className="text-[10px] text-slate-500 uppercase font-semibold">Apps Updated</p>
+                  <p className="text-sm font-bold text-cyan-600 dark:text-cyan-400">{syncMetrics.applications_updated}</p>
+                </div>
               </div>
-              <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">Stored</p>
-                <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{syncProgress.emails_stored}</p>
-              </div>
-              <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">Queued</p>
-                <p className="text-sm font-bold text-violet-600 dark:text-violet-400">{syncProgress.emails_queued}</p>
-              </div>
-              <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">Processing</p>
-                <p className="text-sm font-bold text-amber-600 dark:text-amber-400">{syncProgress.emails_processing}</p>
-              </div>
-              <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">Processed</p>
-                <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{syncProgress.emails_processed}</p>
-              </div>
-              <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">Apps Updated</p>
-                <p className="text-sm font-bold text-cyan-600 dark:text-cyan-400">{syncProgress.applications_updated + syncProgress.new_applications}</p>
-              </div>
+
+              {globalTotals && (
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-slate-500/5 dark:bg-white/[0.02] border border-slate-200/50 dark:border-white/[0.05] text-[11px] text-slate-500 dark:text-slate-400">
+                  <span className="font-semibold uppercase tracking-wider text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500" />
+                    Mailbox Historical Totals
+                  </span>
+                  <div className="flex items-center gap-4 flex-wrap text-xs">
+                    <span>Stored: <strong className="text-slate-800 dark:text-slate-200 font-semibold">{globalTotals.stored}</strong></span>
+                    <span>Processed: <strong className="text-slate-800 dark:text-slate-200 font-semibold">{globalTotals.processed}</strong></span>
+                    <span>Applications: <strong className="text-slate-800 dark:text-slate-200 font-semibold">{globalTotals.applications}</strong></span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

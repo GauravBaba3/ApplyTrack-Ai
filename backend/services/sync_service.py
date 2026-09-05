@@ -181,7 +181,8 @@ class SyncService:
                         try:
                             full_msg = gmail_service.fetch_and_parse_message(msg_id)
                             if full_msg:
-                                cls._process_message(full_msg, user, page_batch_result)
+                                active_sync_job = GmailSyncJob.objects.filter(user=user, status__in=[SyncJobStatus.PENDING, SyncJobStatus.RUNNING]).order_by('-created_at').first()
+                                cls._process_message(full_msg, user, page_batch_result, sync_job=active_sync_job)
                                 page_emails_stored += 1
                         except Exception as e:
                             # One email failure must NOT stop the pipeline
@@ -273,34 +274,89 @@ class SyncService:
         """
         Return the authoritative, real-time pipeline state for this user.
 
-        All counters are derived from the actual database state so values are
-        correct after browser refresh, reconnect, or multiple open tabs.
+        Separates:
+        1. CURRENT SYNC SCOPE:
+           Dedicated to the active (or latest) GmailSyncJob.
+           Internal consistency guaranteed:
+           processed + processing + pending <= queued <= stored <= fetched.
+        2. GLOBAL MAILBOX TOTALS:
+           Lifetime database totals (all emails, historical processing, applications).
         """
         user.refresh_from_db()
         now = timezone.now()
 
-        pending_jobs = EmailProcessingJob.objects.filter(
-            user=user, status__in=[JobStatus.PENDING, JobStatus.RETRY]
-        ).count()
-        processing_jobs = EmailProcessingJob.objects.filter(
-            user=user, status=JobStatus.PROCESSING
-        ).count()
-        completed_jobs = EmailProcessingJob.objects.filter(
-            user=user, status=JobStatus.COMPLETED
-        ).count()
-        failed_jobs = EmailProcessingJob.objects.filter(
-            user=user, status=JobStatus.DEAD_LETTER
-        ).count()
+        # ------------------------------------------------------------------
+        # GLOBAL / MAILBOX TOTALS (Lifetime database state across all time)
+        # ------------------------------------------------------------------
+        global_stored = ProcessedEmail.objects.filter(user=user).count()
+        global_completed = EmailProcessingJob.objects.filter(user=user, status=JobStatus.COMPLETED).count()
+        global_processing = EmailProcessingJob.objects.filter(user=user, status=JobStatus.PROCESSING).count()
+        global_pending = EmailProcessingJob.objects.filter(user=user, status__in=[JobStatus.PENDING, JobStatus.RETRY]).count()
+        global_failed = EmailProcessingJob.objects.filter(user=user, status=JobStatus.DEAD_LETTER).count()
+        global_job_related = ProcessedEmail.objects.filter(user=user, is_job_related=True).count()
+        global_app_count = Application.objects.filter(user=user).count()
 
-        emails_stored = ProcessedEmail.objects.filter(user=user).count()
-        job_related = ProcessedEmail.objects.filter(user=user, is_job_related=True).count()
-        app_count = Application.objects.filter(user=user).count()
-
-        cumulative_stats = user.gmail_sync_batch_stats or {}
-        is_queue_active = pending_jobs > 0 or processing_jobs > 0
-
-        # Authoritative state from durable GmailSyncJob
+        # ------------------------------------------------------------------
+        # CURRENT SYNC SCOPE (Active or latest GmailSyncJob)
+        # ------------------------------------------------------------------
         active_job = GmailSyncJob.objects.filter(user=user).order_by('-created_at').first()
+        cumulative_stats = user.gmail_sync_batch_stats or {}
+
+        if active_job:
+            sync_fetched = active_job.emails_fetched
+            sync_stored = active_job.emails_stored
+
+            # Query email jobs specifically linked to this GmailSyncJob
+            job_qs = active_job.email_jobs.all()
+            sync_job_count = job_qs.count()
+            sync_queued = max(active_job.emails_queued, sync_job_count)
+            sync_processing = job_qs.filter(status=JobStatus.PROCESSING).count()
+            sync_processed = job_qs.filter(status=JobStatus.COMPLETED).count()
+            sync_pending = job_qs.filter(status__in=[JobStatus.PENDING, JobStatus.RETRY]).count()
+            sync_failed = job_qs.filter(status=JobStatus.DEAD_LETTER).count()
+
+            # Handle transition / completion where job records may have been pruned or legacy
+            if sync_job_count == 0 and active_job.status == SyncJobStatus.COMPLETED:
+                sync_processed = active_job.emails_stored
+                sync_queued = active_job.emails_stored
+                sync_pending = 0
+                sync_processing = 0
+
+            # Job-related emails detected during this sync
+            detected_job_related = job_qs.filter(email__is_job_related=True).count()
+            sync_job_related = max(active_job.job_related_emails, detected_job_related)
+
+            # Applications updated or created during this sync
+            linked_apps_count = job_qs.filter(email__application_id__isnull=False).values('email__application_id').distinct().count()
+            sync_apps_updated = max(active_job.applications_updated, linked_apps_count)
+            sync_new_apps = active_job.new_applications
+            sync_needs_rev = active_job.needs_review
+            page_num = active_job.page
+            pages_done = active_job.pages_processed
+            has_more_flag = bool(active_job.cursor) if active_job.status in (SyncJobStatus.PENDING, SyncJobStatus.RUNNING) else False
+            sync_started_at = active_job.started_at
+            sync_id = active_job.id
+            is_sync_queue_active = sync_pending > 0 or sync_processing > 0
+        else:
+            sync_id = None
+            sync_fetched = cumulative_stats.get("emails_scanned", 0)
+            sync_stored = 0
+            sync_queued = 0
+            sync_processing = 0
+            sync_processed = 0
+            sync_pending = 0
+            sync_failed = 0
+            sync_job_related = cumulative_stats.get("job_related_emails", 0)
+            sync_apps_updated = cumulative_stats.get("applications_updated", 0)
+            sync_new_apps = cumulative_stats.get("new_applications", 0)
+            sync_needs_rev = cumulative_stats.get("needs_review", 0)
+            page_num = user.gmail_sync_page or 0
+            pages_done = cumulative_stats.get("pages_processed", 0)
+            has_more_flag = bool(user.gmail_sync_cursor)
+            sync_started_at = user.gmail_sync_started_at
+            is_sync_queue_active = False
+
+        # Compute authoritative sync lifecycle status
         actual_status = user.gmail_sync_status or "idle"
 
         if active_job:
@@ -311,62 +367,86 @@ class SyncService:
                     and active_job.last_heartbeat_at
                     and (now - active_job.last_heartbeat_at) > stale_threshold
                 )
-                if is_stale_lease and not is_queue_active:
+                if is_stale_lease and not is_sync_queue_active:
                     actual_status = "idle"
                 else:
                     actual_status = "running"
             elif active_job.status == SyncJobStatus.COMPLETED:
-                actual_status = "running" if is_queue_active else "completed"
+                actual_status = "running" if is_sync_queue_active else "completed"
             elif active_job.status == SyncJobStatus.FAILED:
-                actual_status = "running" if is_queue_active else "failed"
-        elif actual_status == "running" and not is_queue_active:
+                actual_status = "running" if is_sync_queue_active else "failed"
+        elif actual_status == "running" and not is_sync_queue_active:
             if user.gmail_sync_started_at and (now - user.gmail_sync_started_at) > timedelta(minutes=15):
                 actual_status = "idle"
 
-        emails_fetched = active_job.emails_fetched if active_job else cumulative_stats.get("emails_scanned", 0)
-        page_num = active_job.page if active_job else (user.gmail_sync_page or 0)
-        has_more_flag = (
-            bool(active_job.cursor)
-            if (active_job and active_job.status in (SyncJobStatus.PENDING, SyncJobStatus.RUNNING))
-            else bool(user.gmail_sync_cursor)
-        )
-        apps_updated = active_job.applications_updated if active_job else cumulative_stats.get("applications_updated", 0)
-        new_apps = active_job.new_applications if active_job else cumulative_stats.get("new_applications", 0)
-        needs_rev = active_job.needs_review if active_job else cumulative_stats.get("needs_review", 0)
-        pages_done = active_job.pages_processed if active_job else cumulative_stats.get("pages_processed", 0)
+        sync_metrics = {
+            "status": actual_status,
+            "job_id": sync_id,
+            "fetched": sync_fetched,
+            "stored": sync_stored,
+            "queued": sync_queued,
+            "processing": sync_processing,
+            "processed": sync_processed,
+            "pending": sync_pending,
+            "failed": sync_failed,
+            "job_related": sync_job_related,
+            "applications_updated": sync_apps_updated,
+            "new_applications": sync_new_apps,
+            "page": page_num,
+            "has_more": has_more_flag,
+        }
+
+        global_totals = {
+            "stored": global_stored,
+            "processed": global_completed,
+            "queued": global_pending + global_processing,
+            "processing": global_processing,
+            "pending": global_pending,
+            "failed": global_failed,
+            "job_related": global_job_related,
+            "applications": global_app_count,
+        }
 
         return {
             "status": actual_status,
             "page": page_num,
             "has_more": has_more_flag,
             "last_sync": user.gmail_last_sync,
-            "started_at": active_job.started_at if active_job else user.gmail_sync_started_at,
-            # Granular pipeline counters
-            "emails_fetched": emails_fetched,
-            "emails_stored": emails_stored,
-            "emails_queued": pending_jobs + processing_jobs,
-            "emails_processing": processing_jobs,
-            "emails_processed": completed_jobs,
-            "emails_pending": pending_jobs,
-            "job_related": job_related,
-            "applications_updated": apps_updated,
-            "new_applications": new_apps,
+            "started_at": sync_started_at,
+
+            # Dedicated current sync vs global scopes
+            "sync": sync_metrics,
+            "global": global_totals,
+
+            # Top-level counters strictly scoped to CURRENT SYNC
+            "emails_fetched": sync_fetched,
+            "emails_stored": sync_stored,
+            "emails_queued": sync_queued,
+            "emails_processing": sync_processing,
+            "emails_processed": sync_processed,
+            "emails_pending": sync_pending,
+            "emails_failed": sync_failed,
+            "job_related": sync_job_related,
+            "applications_updated": sync_apps_updated,
+            "new_applications": sync_new_apps,
+            "total_applications": global_app_count,
+
             # Legacy stats dict (backward compat)
             "stats": {
-                "emails_scanned": emails_fetched,
-                "job_related_emails": job_related,
-                "applications_updated": apps_updated,
-                "new_applications": new_apps,
-                "needs_review": needs_rev,
+                "emails_scanned": sync_fetched,
+                "job_related_emails": sync_job_related,
+                "applications_updated": sync_apps_updated,
+                "new_applications": sync_new_apps,
+                "needs_review": sync_needs_rev,
                 "pages_processed": pages_done,
             },
             "queue": {
-                "pending": pending_jobs,
-                "processing": processing_jobs,
-                "completed": completed_jobs,
-                "failed": failed_jobs,
-                "is_active": is_queue_active,
-                "total_applications": app_count,
+                "pending": sync_pending,
+                "processing": sync_processing,
+                "completed": sync_processed,
+                "failed": sync_failed,
+                "is_active": is_sync_queue_active,
+                "total_applications": global_app_count,
             },
         }
 
@@ -476,7 +556,8 @@ class SyncService:
                     try:
                         full_msg = gmail_service.fetch_and_parse_message(msg_id)
                         if full_msg:
-                            cls._process_message(full_msg, user, batch_result)
+                            active_sync_job = GmailSyncJob.objects.filter(user=user, status__in=[SyncJobStatus.PENDING, SyncJobStatus.RUNNING]).order_by('-created_at').first()
+                            cls._process_message(full_msg, user, batch_result, sync_job=active_sync_job)
                     except Exception as e:
                         logger.error(f"Failed to process message {msg_id}: {str(e)}")
                         continue
@@ -546,7 +627,7 @@ class SyncService:
 
     @classmethod
     @transaction.atomic
-    def _process_message(cls, message, user, result):
+    def _process_message(cls, message, user, result, sync_job=None):
         """
         Process a single email message:
         1. Canonical normalisation + gzip compression
@@ -618,7 +699,7 @@ class SyncService:
         )
         logger.debug(f"[EMAIL_PERSISTED] User {user.id} msg={gmail_message_id} priority={triage_priority}")
 
-        JobScheduler.enqueue_email_job(processed_email, user, message)
+        JobScheduler.enqueue_email_job(processed_email, user, message, sync_job=sync_job)
         logger.debug(f"[PROCESSING_JOB_CREATED] User {user.id} msg={gmail_message_id}")
 
         if is_job_likely:

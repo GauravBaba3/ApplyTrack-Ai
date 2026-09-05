@@ -7,8 +7,11 @@ services:
     buildCommand: "pip install -r requirements.txt && bash ../scripts/deploy_backend.sh"
     startCommand: "bash ../scripts/start_web.sh"
     envVars:
+      - fromGroup: applytrack-shared-env
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: PYTHONUNBUFFERED
+        value: "1"
       - key: DEBUG
         value: "False"
 
@@ -20,8 +23,11 @@ services:
     buildCommand: "pip install -r requirements.txt"
     startCommand: "bash ../scripts/start_worker.sh"
     envVars:
+      - fromGroup: applytrack-shared-env
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: PYTHONUNBUFFERED
+        value: "1"
       - key: WORKER_ID
         value: worker-prod-01
       - key: POLL_INTERVAL
@@ -35,6 +41,12 @@ services:
     schedule: "*/15 * * * *"
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python manage.py sync_gmail_incremental"
+    envVars:
+      - fromGroup: applytrack-shared-env
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PYTHONUNBUFFERED
+        value: "1"
 
   # 4. Scheduled Cron Job: P3 Anti-Starvation & Aging (Hourly)
   - type: cron
@@ -44,6 +56,12 @@ services:
     schedule: "0 * * * *"
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python manage.py reprocess_p3_queue"
+    envVars:
+      - fromGroup: applytrack-shared-env
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PYTHONUNBUFFERED
+        value: "1"
 
   # 5. Scheduled Cron Job: 90-Day Raw Email Backblaze B2 Retention Pruning (Daily at 03:00 UTC)
   - type: cron
@@ -53,3 +71,36 @@ services:
     schedule: "0 3 * * *"
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python manage.py prune_raw_emails"
+    envVars:
+      - fromGroup: applytrack-shared-env
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+# Shared Environment Variable Group across Web, Worker, and Cron services
+envVarGroups:
+  - name: applytrack-shared-env
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      - key: B2_BUCKET_NAME
+        sync: false
+      - key: B2_ENDPOINT_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false

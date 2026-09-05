@@ -89,17 +89,56 @@ ASGI_APPLICATION = 'config.asgi.application'
 import sys
 import dj_database_url
 
-if 'test' in sys.argv or 'pytest' in sys.argv:
+is_testing = 'test' in sys.argv or 'pytest' in sys.argv
+is_production = (not DEBUG) or bool(os.getenv('RENDER')) or os.getenv('ENVIRONMENT') == 'production'
+raw_db_url = os.getenv('DATABASE_URL', '').strip()
+
+if is_testing:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
             'NAME': ':memory:',
         }
     }
+elif is_production:
+    # PRODUCTION SAFETY INVARIANT:
+    # Production MUST NEVER silently fall back to SQLite.
+    # Missing DATABASE_URL or SQLite engine must fail fast during startup.
+    if not raw_db_url:
+        raise RuntimeError(
+            "[FATAL CONFIGURATION ERROR] DATABASE_URL environment variable is required in production! "
+            "Silent fallback to SQLite is strictly forbidden in production. "
+            "Startup aborted to prevent data isolation and split-brain states."
+        )
+    parsed_db = dj_database_url.parse(
+        raw_db_url,
+        conn_max_age=60,
+        conn_health_checks=True,
+    )
+    if 'sqlite' in parsed_db.get('ENGINE', '').lower():
+        raise RuntimeError(
+            "[FATAL CONFIGURATION ERROR] SQLite database engine is not permitted in production! "
+            "A PostgreSQL database (Neon) must be configured via DATABASE_URL."
+        )
+    DATABASES = {'default': parsed_db}
 else:
-    DATABASES = {
-        'default': dj_database_url.parse(os.getenv('DATABASE_URL', 'sqlite:///db.sqlite3'))
-    }
+    # Local development mode (DEBUG=True only)
+    if raw_db_url:
+        DATABASES = {
+            'default': dj_database_url.parse(
+                raw_db_url,
+                conn_max_age=60,
+                conn_health_checks=True,
+            )
+        }
+    else:
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': BASE_DIR / 'db.sqlite3',
+            }
+        }
+
 
 
 # Password validation
@@ -312,3 +351,43 @@ MAX_CONCURRENT_WORKERS = int(os.getenv('MAX_CONCURRENT_WORKERS', '1'))  # Conser
 WORKER_LOCK_TIMEOUT_SECONDS = int(os.getenv('WORKER_LOCK_TIMEOUT_SECONDS', '600'))  # 10 minutes
 MAX_JOB_RETRIES = int(os.getenv('MAX_JOB_RETRIES', '3'))  # Max retry attempts before DEAD_LETTER
 BASE_RETRY_BACKOFF_SECONDS = int(os.getenv('BASE_RETRY_BACKOFF_SECONDS', '30'))  # 30 seconds base exponential backoff
+
+# Logging configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'services': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'apps': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
+

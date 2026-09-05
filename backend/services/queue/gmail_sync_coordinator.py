@@ -13,7 +13,7 @@ import logging
 from datetime import timedelta
 from typing import Optional, Dict, Any, Callable
 from django.utils import timezone
-from django.db import transaction
+from django.db import transaction, close_old_connections
 from django.db.models import Q
 from django.conf import settings
 
@@ -159,8 +159,13 @@ class GmailSyncCoordinator:
         Atomically claim the next PENDING or stale RUNNING GmailSyncJob.
         Uses select_for_update(skip_locked=True) for race-free multi-worker concurrency.
         """
+        from django.db import connection
+        if not connection.in_atomic_block:
+            close_old_connections()
         now = timezone.now()
         stale_threshold = now - timedelta(seconds=cls.STALE_LEASE_SECONDS)
+
+        logger.debug(f"[SYNC_JOB_CLAIM_ATTEMPT] Worker {worker_id} checking for PENDING or stale RUNNING jobs")
 
         with transaction.atomic():
             job = GmailSyncJob.objects.select_for_update(skip_locked=True).filter(
@@ -172,6 +177,10 @@ class GmailSyncCoordinator:
                 return None
 
             was_stale = job.status == SyncJobStatus.RUNNING
+            logger.info(
+                f"[GMAIL_SYNC_JOB_FOUND] Worker {worker_id} found {'stale' if was_stale else 'pending'} "
+                f"GmailSyncJob #{job.id} for user {job.user_id} (status={job.status})"
+            )
             job.status = SyncJobStatus.RUNNING
             job.worker_id = worker_id
             job.last_heartbeat_at = now
@@ -217,7 +226,7 @@ class GmailSyncCoordinator:
 
         user = job.user
         logger.info(
-            f"[SYNC_EXEC_START] Worker {worker_id} starting GmailSyncJob #{job.id} "
+            f"[SYNC_JOB_RUNNING] Worker {worker_id} executing GmailSyncJob #{job.id} "
             f"for user {user.id} ({user.email}) page={job.page} cursor='{job.cursor}'"
         )
 
@@ -261,6 +270,10 @@ class GmailSyncCoordinator:
                     time.sleep(backpressure_sleep)
 
                 # Fetch one Gmail page
+                logger.info(
+                    f"[GMAIL_SYNC_PAGE_FETCH] Fetching Gmail page {job.page + 1} for user {user.id} "
+                    f"(cursor='{job.cursor}', limit={page_limit})"
+                )
                 try:
                     message_stubs, next_page_token = gmail_service.get_message_page(
                         page_token=job.cursor,
@@ -359,15 +372,29 @@ class GmailSyncCoordinator:
 
                 pages_in_this_run += 1
                 logger.info(
-                    f"[SYNC_PAGE_COMMITTED] Job #{job.id} user {user.id} page={job.page} "
-                    f"stored={page_emails_stored} fetched={len(message_stubs)} "
+                    f"[GMAIL_SYNC_PAGE_COMMITTED] Job #{job.id} user {user.id} page={job.page} "
+                    f"stored={page_emails_stored} queued={page_emails_stored} fetched={len(message_stubs)} "
                     f"has_more={bool(next_page_token)}"
+                )
+                logger.info(
+                    f"[GMAIL_SYNC_CURSOR_ADVANCED] Job #{job.id} cursor advanced to '{next_page_token}', page {job.page}"
                 )
 
                 if not next_page_token:
                     break
 
-            # Sync complete
+            if next_page_token:
+                # Job has more pages remaining, but this run reached max_pages limit
+                job.status = SyncJobStatus.PENDING
+                job.last_heartbeat_at = timezone.now()
+                job.save(update_fields=['status', 'last_heartbeat_at'])
+                logger.info(
+                    f"[SYNC_JOB_PAUSED] Job #{job.id} paused with cursor '{job.cursor}', page {job.page}. "
+                    f"More pages remain (has_more=True)."
+                )
+                return {'success': True, 'job_id': job.id, 'pages': pages_in_this_run, 'has_more': True}
+
+            # All pages in Gmail have been fetched: mark sync COMPLETED
             job.status = SyncJobStatus.COMPLETED
             job.completed_at = timezone.now()
             job.cursor = None
@@ -390,7 +417,7 @@ class GmailSyncCoordinator:
             )
 
             logger.info(
-                f"[SYNC_JOB_COMPLETED] Job #{job.id} completed successfully for user {user.id}: "
+                f"[GMAIL_SYNC_JOB_COMPLETED] Job #{job.id} completed successfully for user {user.id}: "
                 f"pages={job.pages_processed}, fetched={job.emails_fetched}, stored={job.emails_stored}"
             )
             return {'success': True, 'job_id': job.id, 'pages': pages_in_this_run}
@@ -420,17 +447,24 @@ class GmailSyncCoordinator:
         Continuously claims and executes pending/stale GmailSyncJobs.
         """
         logger.info(
-            f"[GMAIL_SYNC_WORKER] Starting GmailSyncCoordinator loop on worker [{worker_id}] "
+            f"[GMAIL_COORDINATOR_STARTED] GmailSyncCoordinator loop active on worker [{worker_id}] "
             f"(poll_interval={poll_interval_seconds}s)..."
         )
         jobs_processed = 0
+        last_heartbeat_time = time.time()
 
         while True:
             if should_stop_callable and should_stop_callable():
-                logger.info(f"[GMAIL_SYNC_WORKER] Worker [{worker_id}] received stop signal. Exiting.")
+                logger.info(f"[GMAIL_COORDINATOR_STOPPED] Worker [{worker_id}] received stop signal. Exiting.")
                 break
 
             try:
+                close_old_connections()
+                now_ts = time.time()
+                if now_ts - last_heartbeat_time >= 60:
+                    logger.info(f"[GMAIL_COORDINATOR_HEARTBEAT] Worker [{worker_id}] active, polling Neon for sync jobs...")
+                    last_heartbeat_time = now_ts
+
                 job = cls.claim_next_job(worker_id=worker_id)
                 if job:
                     cls.execute_sync_job(
@@ -440,13 +474,13 @@ class GmailSyncCoordinator:
                     )
                     jobs_processed += 1
                     if max_jobs and jobs_processed >= max_jobs:
-                        logger.info(f"[GMAIL_SYNC_WORKER] Worker [{worker_id}] reached max jobs ({max_jobs}).")
+                        logger.info(f"[GMAIL_COORDINATOR_STOPPED] Worker [{worker_id}] reached max jobs ({max_jobs}).")
                         break
                 else:
                     time.sleep(poll_interval_seconds)
 
             except Exception as e:
-                logger.error(f"[GMAIL_SYNC_WORKER_ERROR] Worker [{worker_id}] unexpected loop error: {e}", exc_info=True)
+                logger.error(f"[GMAIL_COORDINATOR_ERROR] Worker [{worker_id}] unexpected loop error: {e}", exc_info=True)
                 time.sleep(poll_interval_seconds)
 
-        logger.info(f"[GMAIL_SYNC_WORKER] Worker [{worker_id}] stopped gracefully.")
+        logger.info(f"[GMAIL_COORDINATOR_STOPPED] Worker [{worker_id}] stopped gracefully.")

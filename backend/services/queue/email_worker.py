@@ -13,7 +13,7 @@ import time
 import logging
 from typing import Dict, Any, List, Optional
 from django.utils import timezone
-from django.db import transaction
+from django.db import transaction, close_old_connections
 from django.db.models import F
 
 from apps.gmail_integration.models import (
@@ -251,6 +251,7 @@ class EmailWorker:
         """
         Claim and execute a single batch of jobs across P1/P2/P3 queues.
         """
+        close_old_connections()
         size = batch_size or LoadController.get_current_batch_size()
         claimed_jobs = JobScheduler.claim_batch(worker_id=self.worker_id, batch_size=size)
 
@@ -291,6 +292,7 @@ class EmailWorker:
 
         while not self._should_stop:
             try:
+                close_old_connections()
                 res = self.process_batch()
                 if res['processed'] > 0:
                     batches_processed += 1

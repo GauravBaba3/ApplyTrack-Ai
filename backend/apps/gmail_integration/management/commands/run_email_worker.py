@@ -8,14 +8,20 @@ Supervises both:
    runs tiered AI classification, and updates applications)
 
 Both operate concurrently in the background worker process independently of the web process.
+Includes database pre-flight checks, thread watchdog supervision, and connection recycling.
 """
 import sys
 import signal
 import threading
+import logging
 from django.core.management.base import BaseCommand
+from django.conf import settings
+from django.db import close_old_connections
 from services.queue.email_worker import EmailWorker
 from services.queue.gmail_sync_coordinator import GmailSyncCoordinator
 from services.queue.load_controller import LoadController
+
+logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
@@ -71,11 +77,38 @@ class Command(BaseCommand):
         process_only = options.get('process_only', False)
         sync_only = options.get('sync_only', False)
 
+        # ------------------------------------------------------------------
+        # STARTUP DATABASE DIAGNOSTIC (Safe host/engine logging, no secrets)
+        # ------------------------------------------------------------------
+        db_conf = settings.DATABASES.get('default', {})
+        raw_engine = db_conf.get('ENGINE', '')
+        engine_type = 'postgresql' if 'postgres' in raw_engine else ('sqlite3' if 'sqlite' in raw_engine else raw_engine)
+        host = db_conf.get('HOST') or 'localhost'
+        dbname = db_conf.get('NAME') or ''
+        is_production = (not settings.DEBUG) or ('RENDER' in settings.ALLOWED_HOSTS or 'RENDER' in dir(settings))
+
+        # Check production invariant
+        if (not settings.DEBUG) and 'sqlite' in engine_type:
+            err_msg = "[WORKER_DB_ERROR] Production worker is not allowed to run on SQLite."
+            logger.critical(err_msg)
+            self.stderr.write(self.style.ERROR(err_msg))
+            sys.exit(1)
+
+        db_diag = (
+            f"[WORKER_DB]\n"
+            f"engine={engine_type}\n"
+            f"host={host}\n"
+            f"database={dbname}"
+        )
+        logger.info(f"[WORKER_DB] engine={engine_type} host={host} database={dbname}")
+        self.stdout.write(db_diag)
+
         stop_requested = threading.Event()
         worker = EmailWorker(worker_id=worker_id)
 
         # Handle graceful shutdown on SIGINT / SIGTERM
         def sig_handler(signum, frame):
+            logger.warning(f"[WORKER_SIGNAL] Received signal {signum}. Requesting graceful worker shutdown...")
             self.stdout.write(self.style.WARNING(f"\nReceived signal {signum}. Requesting graceful worker shutdown..."))
             stop_requested.set()
             worker.stop()
@@ -85,15 +118,15 @@ class Command(BaseCommand):
             signal.signal(signal.SIGTERM, sig_handler)
 
         mode_desc = "sync-only" if sync_only else ("process-only" if process_only else "concurrent producer + consumer")
-        self.stdout.write(self.style.NOTICE(
-            f"Starting Worker [{worker_id}] mode={mode_desc} "
-            f"(poll_interval={poll_interval}s, once={run_once})..."
-        ))
+        startup_msg = f"[WORKER_START] Worker {worker_id} started (poll_interval={poll_interval}s, mode={mode_desc}, once={run_once})"
+        logger.info(startup_msg)
+        self.stdout.write(self.style.NOTICE(startup_msg))
 
         # ------------------------------------------------------------------
         # SINGLE-RUN MODE (--once)
         # ------------------------------------------------------------------
         if run_once:
+            close_old_connections()
             if not process_only:
                 sync_job = GmailSyncCoordinator.claim_next_job(worker_id=f"{worker_id}-sync")
                 if sync_job:
@@ -107,6 +140,7 @@ class Command(BaseCommand):
                     self.stdout.write("No pending GmailSyncJob found.")
 
             if not sync_only:
+                close_old_connections()
                 result = worker.process_batch(batch_size=batch_size)
                 self.stdout.write(self.style.SUCCESS(
                     f"Batch execution finished: {result['processed']} processed "
@@ -115,7 +149,7 @@ class Command(BaseCommand):
             return
 
         # ------------------------------------------------------------------
-        # CONTINUOUS MODE
+        # CONTINUOUS SUPERVISED MODE
         # ------------------------------------------------------------------
         sync_thread = None
 
@@ -132,25 +166,61 @@ class Command(BaseCommand):
                 daemon=False,
             )
             sync_thread.start()
-            self.stdout.write(self.style.SUCCESS(f"GmailSyncProducer thread started [{worker_id}-sync]."))
+            logger.info(f"[GMAIL_COORDINATOR_STARTED] GmailSyncCoordinator thread active [{worker_id}-sync]")
+            self.stdout.write(self.style.SUCCESS(f"[GMAIL_COORDINATOR_STARTED] GmailSyncCoordinator thread active [{worker_id}-sync]"))
 
         if not sync_only:
-            # Run Email Processing Consumer on the main thread
-            try:
-                worker.run_loop(poll_interval_seconds=poll_interval, max_batches=max_batches)
-            finally:
-                stop_requested.set()
-        else:
-            # In sync-only mode, wait on the sync thread
-            try:
-                while not stop_requested.is_set():
-                    stop_requested.wait(timeout=1.0)
-            except KeyboardInterrupt:
-                stop_requested.set()
+            logger.info(f"[EMAIL_WORKER_STARTED] EmailWorker consumer loop active [{worker_id}]")
+            self.stdout.write(self.style.SUCCESS(f"[EMAIL_WORKER_STARTED] EmailWorker consumer loop active [{worker_id}]"))
+
+        # Supervisor loop running on main thread
+        batches_processed = 0
+        try:
+            while not stop_requested.is_set():
+                # 1. Watchdog: check producer thread health
+                if sync_thread is not None and not sync_thread.is_alive() and not stop_requested.is_set():
+                    logger.critical(
+                        f"[WORKER_FATAL] GmailSyncCoordinator thread crashed or terminated unexpectedly! "
+                        f"Worker [{worker_id}] cannot continue without producer. Terminating worker for restart."
+                    )
+                    self.stderr.write(self.style.ERROR("[WORKER_FATAL] GmailSyncCoordinator thread crashed unexpectedly!"))
+                    stop_requested.set()
+                    worker.stop()
+                    sys.exit(1)
+
+                # 2. Recycle stale DB connections
+                close_old_connections()
+
+                # 3. Process email jobs batch if consumer is enabled
+                had_work = False
+                if not sync_only:
+                    try:
+                        batch_res = worker.process_batch(batch_size=batch_size)
+                        if batch_res.get('processed', 0) > 0:
+                            had_work = True
+                            batches_processed += 1
+                            if max_batches and batches_processed >= max_batches:
+                                logger.info(f"[WORKER_MAX_BATCHES] Reached limit ({max_batches}). Stopping.")
+                                stop_requested.set()
+                                break
+                    except Exception as e:
+                        logger.error(f"[EMAIL_WORKER_ERROR] Consumer batch error: {e}", exc_info=True)
+
+                # If consumer had work, continue immediately without sleep; otherwise wait poll_interval
+                if not had_work:
+                    stop_requested.wait(timeout=poll_interval)
+
+        except KeyboardInterrupt:
+            stop_requested.set()
+            worker.stop()
+        finally:
+            stop_requested.set()
+            worker.stop()
 
         # Clean shutdown join
         if sync_thread and sync_thread.is_alive():
             self.stdout.write("Waiting for GmailSyncProducer to finish current page...")
             sync_thread.join(timeout=30)
 
-        self.stdout.write(self.style.SUCCESS(f"Worker [{worker_id}] stopped cleanly."))
+        logger.info(f"[WORKER_STOPPED] Worker [{worker_id}] stopped cleanly.")
+        self.stdout.write(self.style.SUCCESS(f"[WORKER_STOPPED] Worker [{worker_id}] stopped cleanly."))

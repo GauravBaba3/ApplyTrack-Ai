@@ -85,13 +85,25 @@ class SyncSummarySerializer(serializers.Serializer):
 
 
 class SyncStatusResponseSerializer(serializers.Serializer):
-    """Serializer for sync status response."""
+    """Serializer for sync status response - authoritative pipeline state."""
     status = serializers.CharField()
     page = serializers.IntegerField()
     has_more = serializers.BooleanField()
     last_sync = serializers.DateTimeField(allow_null=True)
+    started_at = serializers.DateTimeField(allow_null=True, required=False)
     stats = serializers.DictField()
     queue = serializers.DictField(required=False, default=dict)
+    # Granular pipeline counters (authoritative from DB)
+    emails_fetched = serializers.IntegerField(default=0)
+    emails_stored = serializers.IntegerField(default=0)
+    emails_queued = serializers.IntegerField(default=0)
+    emails_processing = serializers.IntegerField(default=0)
+    emails_processed = serializers.IntegerField(default=0)
+    emails_pending = serializers.IntegerField(default=0)
+    job_related = serializers.IntegerField(default=0)
+    applications_updated = serializers.IntegerField(default=0)
+    new_applications = serializers.IntegerField(default=0)
+
 
 
 class EmailProcessingJobSerializer(serializers.ModelSerializer):

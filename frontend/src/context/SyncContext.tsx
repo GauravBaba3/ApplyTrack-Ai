@@ -1,16 +1,58 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { gmailApi, authApi } from '../services/api';
-import { SyncSummary, SyncStatus, User } from '../types';
+import { SyncStatus, User } from '../types';
 import { useToast } from './ToastContext';
 import { cacheService } from '../services/cacheService';
 
-const GMAIL_AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
-const QUEUE_POLL_INTERVAL_MS = 2500; // 2.5 seconds during active queue processing
+/**
+ * SyncContext — server-authoritative sync state.
+ *
+ * Design change: the browser no longer drives the Gmail fetch loop.
+ * Instead:
+ *  1. triggerSync() calls POST /api/gmail/sync/start/ which returns 202 immediately
+ *     and starts a background thread on the server.
+ *  2. startPolling() polls GET /api/gmail/sync/status/ every POLL_INTERVAL_MS.
+ *  3. On every poll tick dataVersion is bumped so all data-consuming components
+ *     (Dashboard, Applications, Email Activity) re-fetch their data automatically.
+ *  4. Polling stops when the backend reports status !== 'running' AND the queue
+ *     is no longer active.
+ *
+ * Result: closing / refreshing the browser does NOT stop the sync.  The frontend
+ * simply reconnects and picks up the current backend state.
+ */
+
+const POLL_INTERVAL_MS = 3000;   // Poll status every 3 seconds during active sync
+const IDLE_POLL_MS = 30000;      // Poll every 30 seconds to catch background queue activity
+const AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000; // Trigger a new sync every 10 minutes
+
+// Progress shape exposed through context
+export interface SyncProgress {
+  status: string;
+  emails_fetched: number;
+  emails_stored: number;
+  emails_queued: number;
+  emails_processing: number;
+  emails_processed: number;
+  emails_pending: number;
+  job_related: number;
+  applications_updated: number;
+  new_applications: number;
+  page: number;
+  has_more: boolean;
+  queue: {
+    pending: number;
+    processing: number;
+    completed: number;
+    failed: number;
+    is_active: boolean;
+    total_applications: number;
+  };
+}
 
 interface SyncContextType {
   isSyncing: boolean;
   syncStatus: 'idle' | 'running' | 'completed' | 'failed';
-  progress: SyncSummary | null;
+  progress: SyncProgress | null;
   lastSync: string | null;
   error: string | null;
   dataVersion: number;
@@ -21,17 +63,21 @@ const SyncContext = createContext<SyncContextType | undefined>(undefined);
 
 export function SyncProvider({ children }: { children: ReactNode }) {
   const { info, success, error: toastError } = useToast();
-  
+
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
-  const [progress, setProgress] = useState<SyncSummary | null>(() => cacheService.get<SyncSummary>('sync:progress'));
-  const [lastSync, setLastSync] = useState<string | null>(() => cacheService.get<string>('sync:last_sync'));
+  const [progress, setProgress] = useState<SyncProgress | null>(null);
+  const [lastSync, setLastSync] = useState<string | null>(
+    () => cacheService.get<string>('sync:last_sync')
+  );
   const [error, setError] = useState<string | null>(null);
   const [dataVersion, setDataVersion] = useState(0);
 
-  const isLoopRunning = useRef(false);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMounted = useRef(true);
-  const lastSyncAttemptTime = useRef<number>(Date.now());
+  const isPolling = useRef(false);
+  const hasShownStartToast = useRef(false);
+  const lastSyncAttemptTime = useRef<number>(0);
 
   useEffect(() => {
     isMounted.current = true;
@@ -52,249 +98,246 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     setDataVersion((prev) => prev + 1);
   }, []);
 
-  const monitorQueueProcessing = useCallback(async () => {
-    // Poll queue processing until all jobs complete
-    let pollCount = 0;
-    const maxPolls = 60; // Up to ~2.5 minutes of continuous monitoring
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    isPolling.current = false;
+  }, []);
 
-    while (isMounted.current && pollCount < maxPolls) {
-      pollCount++;
-      await new Promise((resolve) => setTimeout(resolve, QUEUE_POLL_INTERVAL_MS));
-      if (!isMounted.current) break;
+  /**
+   * Poll /api/gmail/sync/status/ and update UI state.
+   * Returns true if sync is still running (caller should keep polling).
+   */
+  const pollStatus = useCallback(async (): Promise<boolean> => {
+    if (!isMounted.current) return false;
+    try {
+      const res = await gmailApi.getStatus();
+      const data: SyncStatus = res.data;
+      if (!isMounted.current) return false;
 
-      try {
-        const statusRes = await gmailApi.getStatus();
-        const statusData: SyncStatus = statusRes.data;
+      const backendStatus = data?.status || 'idle';
+      const isRunning = backendStatus === 'running';
+      const queueActive = data?.queue?.is_active === true;
 
-        if (statusData?.queue) {
-          const { pending, processing, completed, failed, is_active, total_applications } = statusData.queue;
-          
-          // Invalidate cache and bump version on every poll step so UI increments in real-time
-          invalidateDatasets();
+      // Build progress from the richer status fields
+      const prog: SyncProgress = {
+        status: backendStatus,
+        emails_fetched: (data as any).emails_fetched ?? data?.stats?.emails_scanned ?? 0,
+        emails_stored: (data as any).emails_stored ?? 0,
+        emails_queued: (data as any).emails_queued ?? 0,
+        emails_processing: (data as any).emails_processing ?? (data?.queue?.processing ?? 0),
+        emails_processed: (data as any).emails_processed ?? (data?.queue?.completed ?? 0),
+        emails_pending: (data as any).emails_pending ?? (data?.queue?.pending ?? 0),
+        job_related: (data as any).job_related ?? data?.stats?.job_related_emails ?? 0,
+        applications_updated: (data as any).applications_updated ?? data?.stats?.applications_updated ?? 0,
+        new_applications: (data as any).new_applications ?? data?.stats?.new_applications ?? 0,
+        page: data?.page ?? 0,
+        has_more: data?.has_more ?? false,
+        queue: data?.queue ?? {
+          pending: 0, processing: 0, completed: 0, failed: 0,
+          is_active: false, total_applications: 0,
+        },
+      };
 
-          if (!is_active || (pending === 0 && processing === 0)) {
-            // All background jobs completed
-            success(
-              'Processing completed',
-              `${total_applications || 0} applications tracked and pipeline updated.`
-            );
-            break;
-          }
-        } else {
-          invalidateDatasets();
-          break;
+      setProgress(prog);
+      setIsSyncing(isRunning || queueActive);
+
+      if (isRunning || queueActive) {
+        setSyncStatus('running');
+        // Invalidate cache on every poll tick so UI counters increment in real-time
+        invalidateDatasets();
+
+        if (!hasShownStartToast.current) {
+          info('Gmail sync running', 'Importing and processing emails in the background...');
+          hasShownStartToast.current = true;
         }
-      } catch (err) {
-        // Continue loop if a single status check has a temporary network glitch
+        return true; // keep polling
+      } else {
+        // Sync is no longer active
+        setSyncStatus(backendStatus === 'failed' ? 'failed' : 'completed');
+        invalidateDatasets();
+
+        if (data?.last_sync) {
+          const nowIso = typeof data.last_sync === 'string' ? data.last_sync : new Date(data.last_sync).toISOString();
+          setLastSync(nowIso);
+          cacheService.set('sync:last_sync', nowIso);
+        }
+
+        if (backendStatus === 'failed') {
+          setError('Sync encountered an error. Will retry automatically.');
+          toastError('Gmail sync failed', 'Check your connection and try again.');
+        } else if (hasShownStartToast.current) {
+          // Only show completion toast if we previously showed a start toast
+          const processed = prog.emails_processed;
+          const apps = prog.applications_updated || prog.new_applications;
+          success(
+            'Sync complete',
+            processed > 0
+              ? `${processed} emails processed${apps > 0 ? `, ${apps} applications updated` : ''}.`
+              : 'Mailbox is up to date.'
+          );
+          hasShownStartToast.current = false;
+        }
+
+        return false; // stop polling
+      }
+    } catch {
+      // Transient network error — keep polling (don't abort sync watch)
+      return isMounted.current;
+    }
+  }, [info, success, toastError, invalidateDatasets]);
+
+  /**
+   * Start polling the status endpoint.
+   * Uses an interval so it keeps running regardless of React component lifecycle.
+   */
+  const startPolling = useCallback(() => {
+    if (isPolling.current) return;
+    isPolling.current = true;
+
+    // Poll immediately, then set up interval
+    pollStatus();
+
+    pollTimerRef.current = setInterval(async () => {
+      if (!isMounted.current) {
+        stopPolling();
+        return;
+      }
+      const stillRunning = await pollStatus();
+      if (!stillRunning) {
+        stopPolling();
+        // Switch to slow idle polling to catch any future queue activity
+        pollTimerRef.current = setInterval(async () => {
+          if (!isMounted.current) {
+            stopPolling();
+            return;
+          }
+          const res = await gmailApi.getStatus().catch(() => null);
+          if (res?.data?.queue?.is_active) {
+            stopPolling();
+            startPolling(); // re-enter fast polling
+          }
+        }, IDLE_POLL_MS);
+      }
+    }, POLL_INTERVAL_MS);
+  }, [pollStatus, stopPolling]);
+
+  /**
+   * Trigger a Gmail sync.
+   * Calls POST /api/gmail/sync/start/ which returns 202 immediately.
+   * The actual sync runs server-side in a background thread.
+   */
+  const triggerSync = useCallback(async (reset: boolean = true) => {
+    lastSyncAttemptTime.current = Date.now();
+    setError(null);
+
+    try {
+      // Tell the server to start (or resume) a sync
+      await gmailApi.start({ reset });
+
+      if (!isMounted.current) return;
+
+      setSyncStatus('running');
+      setIsSyncing(true);
+
+      // Start / ensure we're polling for updates
+      stopPolling();
+      hasShownStartToast.current = false;
+      startPolling();
+    } catch (err: any) {
+      if (isMounted.current) {
+        const errMsg = err.response?.data?.error || err.message || 'Sync failed to start';
+        setError(errMsg);
+        toastError('Sync failed', errMsg);
       }
     }
-  }, [invalidateDatasets, success]);
+  }, [startPolling, stopPolling, toastError]);
 
-  const runSyncLoop = useCallback(
-    async (reset: boolean = false) => {
-      if (isLoopRunning.current) return;
-      isLoopRunning.current = true;
-      lastSyncAttemptTime.current = Date.now();
-      setIsSyncing(true);
-      setSyncStatus('running');
-      setError(null);
-
-      let isReset = reset;
-      let hasShownStartToast = false;
-      let consecutiveErrors = 0;
-
-      try {
-        // Phase 1: Gmail Ingestion Loop with Automatic Resumption
-        while (isMounted.current) {
-          try {
-            const response = await gmailApi.sync({ reset: isReset });
-            isReset = false;
-            consecutiveErrors = 0;
-            const data: SyncSummary = response.data;
-
-            if (!isMounted.current) break;
-
-            setProgress(data);
-            cacheService.set('sync:progress', data);
-            invalidateDatasets();
-
-            // Show "Gmail sync started" toast once per session
-            if (!hasShownStartToast) {
-              info('Gmail sync started', "Importing messages and processing in background...");
-              hasShownStartToast = true;
-            }
-
-            // Check if ingestion finished
-            if (!data.has_more || data.status === 'completed' || data.status === 'failed') {
-              if (data.status === 'failed') {
-                const errMsg = data.message || 'Sync encountered an error';
-                setError(errMsg);
-                setSyncStatus('failed');
-                toastError('Gmail sync failed', errMsg);
-              } else {
-                setSyncStatus('completed');
-                const cumulative = data.cumulative || {
-                  emails_scanned: data.emails_scanned || 0,
-                  job_related_emails: data.job_related_emails || 0,
-                  applications_updated: data.applications_updated || 0,
-                  new_applications: data.new_applications || 0,
-                };
-
-                const msg =
-                  cumulative.emails_scanned > 0
-                    ? `${cumulative.emails_scanned} emails imported and queued for processing.`
-                    : 'Mailbox is up to date.';
-
-                info('Gmail import completed', msg);
-                const nowIso = new Date().toISOString();
-                setLastSync(nowIso);
-                cacheService.set('sync:last_sync', nowIso);
-                invalidateDatasets();
-              }
-              break;
-            }
-
-            // Controlled delay between batches (1.5 seconds)
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-          } catch (batchErr: any) {
-            consecutiveErrors++;
-            if (consecutiveErrors <= 3) {
-              info('Sync interrupted', 'Retrying automatically from checkpoint...');
-              await new Promise((resolve) => setTimeout(resolve, 3000));
-              continue;
-            }
-            throw batchErr;
-          }
-        }
-
-        // Phase 2: Background Worker Queue Monitoring & Progressive UI Updates
-        if (isMounted.current) {
-          await monitorQueueProcessing();
-        }
-
-      } catch (err: any) {
-        if (isMounted.current) {
-          console.error('Global background Gmail sync failed:', err);
-          const errMsg = err.response?.data?.error || err.message || 'Sync failed';
-          setError(errMsg);
-          setSyncStatus('failed');
-          toastError('Gmail sync failed', errMsg);
-        }
-      } finally {
-        if (isMounted.current) {
-          setIsSyncing(false);
-          setSyncStatus('idle');
-          invalidateDatasets();
-        }
-        isLoopRunning.current = false;
-      }
-    },
-    [info, success, toastError, invalidateDatasets, monitorQueueProcessing]
-  );
-
-  // Check sync status and auto-resume on application mount
+  // On mount: check current backend sync state and resume polling if needed
   useEffect(() => {
-    let cancel = false;
+    let cancelled = false;
 
-    const checkAndAutoSync = async () => {
+    const checkAndResume = async () => {
       try {
         const meRes = await authApi.getMe();
-        if (cancel) return;
+        if (cancelled || !isMounted.current) return;
         const user: User = meRes.data;
+        if (!user || !user.gmail_connected) return;
 
-        if (!user) return;
-
-        // Scope cacheService to this user
+        // Scope cache to this user
         cacheService.setUser(user.id);
-
-        if (!user.gmail_connected) {
-          return;
-        }
 
         if (user.gmail_last_sync) {
           setLastSync(user.gmail_last_sync);
           cacheService.set('sync:last_sync', user.gmail_last_sync);
         }
 
-        // Check if there is an in-progress historical sync or active queue to auto-resume
-        try {
-          const statusRes = await gmailApi.getStatus();
-          const statusData: SyncStatus = statusRes.data;
+        // Check current backend state
+        const statusRes = await gmailApi.getStatus();
+        if (cancelled || !isMounted.current) return;
+        const statusData: SyncStatus = statusRes.data;
 
-          if (statusData?.status === 'running' || statusData?.has_more) {
-            // Automatically resume interrupted sync from persisted checkpoint
-            runSyncLoop(false);
-            return;
-          } else if (statusData?.queue?.is_active) {
-            // Automatically resume observing queue processing
-            monitorQueueProcessing();
-          }
-        } catch (statusErr) {
-          // Fall through to normal interval check
+        if (statusData?.status === 'running' || statusData?.queue?.is_active) {
+          // Sync is running on the server — start polling immediately
+          setSyncStatus('running');
+          setIsSyncing(true);
+          startPolling();
+          return;
         }
 
+        // Not currently running. Auto-trigger if never synced or overdue.
         const lastSyncDate = user.gmail_last_sync ? new Date(user.gmail_last_sync) : null;
-        const now = new Date();
-
-        // If never synced: auto-trigger initial sync
-        // If last sync was > 10 minutes ago: auto-trigger lightweight incremental sync
         const isNeverSynced = !lastSyncDate;
-        const isDue = lastSyncDate && now.getTime() - lastSyncDate.getTime() > GMAIL_AUTO_SYNC_INTERVAL_MS;
+        const isDue = lastSyncDate && (Date.now() - lastSyncDate.getTime()) > AUTO_SYNC_INTERVAL_MS;
 
         if (isNeverSynced || isDue) {
-          runSyncLoop(false);
+          triggerSync(false);
+        } else {
+          // Start slow idle polling to catch any background queue activity
+          startPolling();
         }
-      } catch (err) {
-        console.debug('Auto-sync check skipped:', err);
+      } catch {
+        // Silently skip — user may not be logged in yet
       }
     };
 
-    checkAndAutoSync();
-    return () => {
-      cancel = true;
-    };
-  }, [runSyncLoop, monitorQueueProcessing]);
+    checkAndResume();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Periodic 10-minute incremental sync interval
+  // Periodic 10-minute auto sync
   useEffect(() => {
-    const intervalId = setInterval(() => {
-      if (!isLoopRunning.current) {
-        runSyncLoop(false);
+    const id = setInterval(() => {
+      if (!isSyncing && isMounted.current) {
+        triggerSync(false);
       }
-    }, GMAIL_AUTO_SYNC_INTERVAL_MS);
+    }, AUTO_SYNC_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [isSyncing, triggerSync]);
 
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [runSyncLoop]);
-
-  // Visibility and online listeners for smart sync recovery
+  // Smart visibility / online recovery
   useEffect(() => {
-    const handleVisibilityOrOnline = () => {
-      if (document.visibilityState === 'visible' && navigator.onLine) {
-        const now = Date.now();
-        // Cooldown: at least 10 minutes since last attempt before auto-triggering on tab focus
-        if (now - lastSyncAttemptTime.current > GMAIL_AUTO_SYNC_INTERVAL_MS && !isLoopRunning.current) {
-          runSyncLoop(false);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine && isMounted.current) {
+        const cooldown = AUTO_SYNC_INTERVAL_MS;
+        if (Date.now() - lastSyncAttemptTime.current > cooldown) {
+          triggerSync(false);
+        } else if (!isPolling.current) {
+          // Even if not overdue, resume polling to pick up server-side progress
+          startPolling();
         }
       }
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityOrOnline);
-    window.addEventListener('online', handleVisibilityOrOnline);
-
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onVisible);
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityOrOnline);
-      window.removeEventListener('online', handleVisibilityOrOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onVisible);
     };
-  }, [runSyncLoop]);
-
-  const triggerSync = useCallback(
-    async (reset: boolean = true) => {
-      return runSyncLoop(reset);
-    },
-    [runSyncLoop]
-  );
+  }, [triggerSync, startPolling]);
 
   return (
     <SyncContext.Provider

@@ -308,3 +308,67 @@ class ProviderUsageLog(models.Model):
         return f"{self.provider} [{self.status_code}] ({self.latency_ms}ms) at {self.created_at}"
 
 
+class SyncJobStatus(models.TextChoices):
+    """Lifecycle states for durable Gmail synchronization jobs."""
+    PENDING = 'PENDING', 'Pending'
+    RUNNING = 'RUNNING', 'Running'
+    COMPLETED = 'COMPLETED', 'Completed'
+    FAILED = 'FAILED', 'Failed'
+    CANCELLED = 'CANCELLED', 'Cancelled'
+
+
+class GmailSyncJob(models.Model):
+    """
+    Durable server-side Gmail synchronization job record stored in Neon PostgreSQL.
+    Tracks pagination checkpoints, worker leases, heartbeats, metrics, and recovery states
+    independently of Django web-process or browser lifetimes.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='gmail_sync_jobs')
+    status = models.CharField(
+        max_length=20,
+        choices=SyncJobStatus.choices,
+        default=SyncJobStatus.PENDING,
+        db_index=True
+    )
+    
+    # Checkpoint & Pagination
+    cursor = models.CharField(max_length=255, blank=True, null=True)
+    page = models.IntegerField(default=0)
+    pages_processed = models.IntegerField(default=0)
+    
+    # Granular Pipeline Counters
+    emails_fetched = models.IntegerField(default=0)
+    emails_stored = models.IntegerField(default=0)
+    emails_queued = models.IntegerField(default=0)
+    job_related_emails = models.IntegerField(default=0)
+    applications_updated = models.IntegerField(default=0)
+    new_applications = models.IntegerField(default=0)
+    needs_review = models.IntegerField(default=0)
+    
+    # Lease & Lock Ownership (Crash-Safe Recovery)
+    worker_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    last_heartbeat_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    lease_timeout_seconds = models.IntegerField(default=300)
+    
+    # Retry and Error Tracking
+    retry_count = models.IntegerField(default=0)
+    max_retries = models.IntegerField(default=3)
+    last_error = models.TextField(blank=True, null=True)
+    
+    # Lifecycle Timestamps
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    started_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['status', 'last_heartbeat_at']),
+        ]
+
+    def __str__(self):
+        return f"GmailSyncJob #{self.id} [{self.status}] user={self.user_id} page={self.page} worker={self.worker_id}"
+
+

@@ -20,22 +20,19 @@ function formatRelativeTime(dateString: string | null): string {
 export default function GlobalSyncIndicator() {
   const { isSyncing, progress, lastSync, triggerSync } = useSync();
 
-  const cumulative = progress?.cumulative || {
-    emails_scanned: progress?.emails_scanned || 0,
-    new_applications: progress?.new_applications || 0,
-  };
+  const fetched = progress?.emails_fetched ?? 0;
+  const processed = progress?.emails_processed ?? 0;
 
   if (isSyncing) {
     return (
       <div
         className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-500/10 dark:bg-indigo-500/15 border border-indigo-500/25 text-indigo-700 dark:text-indigo-300 text-xs font-semibold backdrop-blur-md animate-pulse shadow-sm"
-        title="Gmail background sync in progress"
+        title="Gmail background sync in progress — runs server-side, survives refresh"
       >
         <RefreshCw size={13} className="animate-spin text-indigo-600 dark:text-indigo-400 shrink-0" />
         <span className="hidden sm:inline">
-          Syncing... {progress?.page ? `(Page ${progress.page}` : ''}
-          {cumulative.emails_scanned > 0 ? ` • ${cumulative.emails_scanned} scanned` : ''}
-          {progress?.page ? ')' : ''}
+          Syncing{fetched > 0 ? ` • ${fetched} fetched` : ''}
+          {processed > 0 ? ` • ${processed} processed` : ''}
         </span>
         <span className="sm:hidden">Syncing...</span>
       </div>

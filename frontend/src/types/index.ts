@@ -131,6 +131,7 @@ export interface SyncStatus {
   page: number;
   has_more: boolean;
   last_sync: string | null;
+  started_at?: string | null;
   stats: {
     emails_scanned: number;
     job_related_emails: number;
@@ -139,6 +140,16 @@ export interface SyncStatus {
     needs_review: number;
     pages_processed: number;
   };
+  // Granular pipeline counters (authoritative from DB)
+  emails_fetched?: number;
+  emails_stored?: number;
+  emails_queued?: number;
+  emails_processing?: number;
+  emails_processed?: number;
+  emails_pending?: number;
+  job_related?: number;
+  applications_updated?: number;
+  new_applications?: number;
   queue?: {
     pending: number;
     processing: number;

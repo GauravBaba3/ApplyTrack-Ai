@@ -196,6 +196,8 @@ export const emailApi = {
 export const gmailApi = {
   sync: (options?: { reset?: boolean; page_size?: number }) => 
     api.post('/gmail/sync/', options || {}),
+  start: (options?: { reset?: boolean }) =>
+    api.post('/gmail/sync/start/', options || {}),
   getStatus: () => api.get('/gmail/sync/status/'),
 };
 

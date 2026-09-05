@@ -66,12 +66,16 @@ export default function DashboardPage() {
     triggerSync(true);
   };
 
-  const cumulativeStats = progress?.cumulative || {
-    emails_scanned: progress?.emails_scanned || 0,
-    job_related_emails: progress?.job_related_emails || 0,
-    applications_updated: progress?.applications_updated || 0,
-    new_applications: progress?.new_applications || 0,
-  };
+  const syncProgress = progress ? {
+    emails_fetched: progress.emails_fetched ?? 0,
+    emails_stored: progress.emails_stored ?? 0,
+    emails_queued: progress.emails_queued ?? 0,
+    emails_processing: progress.emails_processing ?? 0,
+    emails_processed: progress.emails_processed ?? 0,
+    job_related: progress.job_related ?? 0,
+    applications_updated: progress.applications_updated ?? 0,
+    new_applications: progress.new_applications ?? 0,
+  } : null;
 
   const totalApps = stats?.total_applications || 0;
   const appliedCount = stats?.applied || 0;
@@ -127,7 +131,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Sync In-Progress Banner */}
       {isSyncing && (
         <div className="glass-2 p-3.5 sm:p-5 rounded-2xl border-indigo-500/30 bg-indigo-500/5 space-y-2.5 sm:space-y-3 animate-fade-in">
           <div className="flex items-center justify-between">
@@ -137,31 +140,39 @@ export default function DashboardPage() {
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300 truncate">
-                  {syncStatus === 'running' ? 'Scanning Gmail Mailbox...' : 'Ingesting Messages & Updating Pipeline...'}
+                  Gmail Sync Running
                 </p>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                  Importing message metadata and queuing for classification.
+                  Fetching, storing and processing emails concurrently in the background
                 </p>
               </div>
             </div>
           </div>
-          {cumulativeStats.emails_scanned > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-indigo-500/15 text-center">
+          {syncProgress && (
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 pt-2 border-t border-indigo-500/15 text-center">
               <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">Emails Scanned</p>
-                <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{cumulativeStats.emails_scanned}</p>
+                <p className="text-[10px] text-slate-500 uppercase font-semibold">Fetched</p>
+                <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{syncProgress.emails_fetched}</p>
               </div>
               <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">Job Related</p>
-                <p className="text-sm font-bold text-indigo-600 dark:text-indigo-400">{cumulativeStats.job_related_emails}</p>
+                <p className="text-[10px] text-slate-500 uppercase font-semibold">Stored</p>
+                <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{syncProgress.emails_stored}</p>
               </div>
               <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">Updated</p>
-                <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{cumulativeStats.applications_updated}</p>
+                <p className="text-[10px] text-slate-500 uppercase font-semibold">Queued</p>
+                <p className="text-sm font-bold text-violet-600 dark:text-violet-400">{syncProgress.emails_queued}</p>
               </div>
               <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
-                <p className="text-[10px] text-slate-500 uppercase font-semibold">New Opportunities</p>
-                <p className="text-sm font-bold text-cyan-600 dark:text-cyan-400">{cumulativeStats.new_applications}</p>
+                <p className="text-[10px] text-slate-500 uppercase font-semibold">Processing</p>
+                <p className="text-sm font-bold text-amber-600 dark:text-amber-400">{syncProgress.emails_processing}</p>
+              </div>
+              <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
+                <p className="text-[10px] text-slate-500 uppercase font-semibold">Processed</p>
+                <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{syncProgress.emails_processed}</p>
+              </div>
+              <div className="p-2 rounded-xl bg-white/40 dark:bg-white/[0.03]">
+                <p className="text-[10px] text-slate-500 uppercase font-semibold">Apps Updated</p>
+                <p className="text-sm font-bold text-cyan-600 dark:text-cyan-400">{syncProgress.applications_updated + syncProgress.new_applications}</p>
               </div>
             </div>
           )}
